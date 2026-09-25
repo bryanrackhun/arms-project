@@ -1,0 +1,22 @@
+{# Reusable form field: label, widget, help text and inline errors. #}
+{# Usage: {% include "core/_field.html" with field=form.first_name %} #}
+{# Usage: {% include "core/_field.html" with field=form.password label="New password" optional=True %} #}
+{# Usage: {% include "core/_field.html" with field=form.role wide=True %} #}
+{# Help/error ids match those Django puts in the widget's aria-describedby. #}
+<div class="field{% if wide %} field--wide{% endif %}{% if field.errors %} field--invalid{% endif %}">
+  <label class="field__label" for="{{ field.id_for_label }}">
+    {% firstof label field.label %}{% if field.field.required and not optional %}<span class="field__req" title="Required">*</span>{% endif %}
+  </label>
+
+  {{ field }}
+
+  {% if field.help_text or help or help_suffix %}
+    <div class="field__help" id="{{ field.auto_id }}_helptext">{% firstof help field.help_text %}{% if help_suffix %} {{ help_suffix }}{% endif %}</div>
+  {% endif %}
+
+  {% if field.errors %}
+    <ul class="errorlist field__errors" id="{{ field.auto_id }}_error">
+      {% for error in field.errors %}<li>{{ error }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+</div>

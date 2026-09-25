@@ -1,0 +1,142 @@
+{% extends "core/base.html" %}
+{% block title %}Staff accounts — ARMS{% endblock %}
+{% block content %}
+{# Staff listing: searchable table with role, status and actions (Administrator only) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Staff accounts</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Staff accounts</h1>
+    <p class="page-head__sub">
+      {{ result_count }} result{{ result_count|pluralize }}
+      {% if query or status_filter %} for the current filter{% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--primary" href="{% url 'core:staff_create' %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+           stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      <span>Add staff account</span>
+    </a>
+  </div>
+</div>
+
+<section class="card card--filters">
+  <h2 class="sr-only">Filter staff accounts</h2>
+  <form class="filter-bar" method="get" action="{% url 'core:staff_list' %}">
+    <div class="filter-bar__field filter-bar__field--grow">
+      <label class="filter-bar__label" for="q">Search</label>
+      <input class="control" type="search" id="q" name="q" value="{{ query }}"
+             placeholder="Name or email" autocomplete="off">
+    </div>
+
+    <div class="filter-bar__field">
+      <label class="filter-bar__label" for="status">Status</label>
+      <select class="control" id="status" name="status">
+        <option value=""{% if not status_filter %} selected{% endif %}>All</option>
+        <option value="active"{% if status_filter == 'active' %} selected{% endif %}>Active</option>
+        <option value="inactive"{% if status_filter == 'inactive' %} selected{% endif %}>Deactivated</option>
+      </select>
+    </div>
+
+    <div class="filter-bar__actions">
+      <button class="btn btn--primary" type="submit">Filter</button>
+      {% if query or status_filter %}
+        <a class="btn btn--ghost" href="{% url 'core:staff_list' %}">Reset</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Accounts</h2>
+    {% if query or status_filter %}
+      <span class="card__hint">Filtered results</span>
+    {% else %}
+      <span class="card__hint">{{ result_count }} total</span>
+    {% endif %}
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Staff accounts with role, status and available actions</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">ID</th>
+          <th scope="col">Name</th>
+          <th scope="col">Email</th>
+          <th scope="col">Phone</th>
+          <th scope="col">Role</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="th-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for staff in staff_rows %}
+          <tr{% if not staff.IsActive %} class="row--muted"{% endif %}>
+            <td class="mono num">{{ staff.StaffID }}</td>
+            <td>
+              <span class="cell-name">
+                <span class="cell-name__avatar" aria-hidden="true">{{ staff.full_name|slice:":1"|upper }}</span>
+                <span class="cell-name__text">{{ staff.full_name }}</span>
+              </span>
+            </td>
+            <td><a class="cell-mail" href="mailto:{{ staff.Email }}">{{ staff.Email }}</a></td>
+            <td>{{ staff.Phone|default:"—" }}</td>
+            <td><span class="badge badge--role">{{ staff.RoleID.RoleName }}</span></td>
+            <td>
+              {% if staff.IsActive %}
+                <span class="badge badge--active">Active</span>
+              {% else %}
+                <span class="badge badge--inactive">Deactivated</span>
+              {% endif %}
+            </td>
+            <td class="actions">
+              <a class="btn btn--ghost btn--sm" href="{% url 'core:staff_edit' staff.StaffID %}">Edit</a>
+
+              {% if staff.IsActive %}
+                {% if staff.StaffID != identity.staff_id %}
+                  {# the confirmation text lives in an HTML attribute, so names #}
+                  {# containing apostrophes or quotes cannot break the script #}
+                  <form class="inline-form" method="post"
+                        action="{% url 'core:staff_deactivate' staff.StaffID %}"
+                        data-confirm="Deactivate {{ staff.full_name }}? They will no longer be able to log in.">
+                    {% csrf_token %}
+                    <button class="btn btn--danger btn--sm" type="submit">Deactivate</button>
+                  </form>
+                {% else %}
+                  <span class="badge badge--self" title="You cannot deactivate your own account">This is you</span>
+                {% endif %}
+              {% else %}
+                <form class="inline-form" method="post" action="{% url 'core:staff_reactivate' staff.StaffID %}">
+                  {% csrf_token %}
+                  <button class="btn btn--ghost btn--sm" type="submit">Reactivate</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7">
+              {% include "core/_empty.html" with title="No staff accounts match the filter" hint="Try a different search term, or clear the status filter." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Accounts are deactivated, never deleted, so technician records keep their link.
+  </p>
+</section>
+{% endblock %}

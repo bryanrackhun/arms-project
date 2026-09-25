@@ -1,0 +1,19 @@
+{# Root-level error template (see the note in 404.html). Django renders this with #}
+{# an EMPTY context, so nothing here may rely on `identity` or any view-supplied #}
+{# value -- base.html already guards every such use with {% if %}. #}
+{% extends "core/base.html" %}
+{% block title %}Server error — ARMS{% endblock %}
+{% block content %}
+<div class="status-card">
+  <div class="status-card__code" aria-hidden="true">500</div>
+  <h1 class="status-card__title">Something went wrong</h1>
+  <p class="status-card__lead">
+    An unexpected error stopped that request. The detail has been recorded
+    server-side; no data was changed by the failed request.
+  </p>
+
+  <div class="form-actions form-actions--center">
+    <a class="btn btn--primary" href="{% url 'core:login' %}">Return to the sign-in page</a>
+  </div>
+</div>
+{% endblock %}

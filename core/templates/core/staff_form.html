@@ -1,0 +1,88 @@
+{% extends "core/base.html" %}
+{% block title %}{% if mode == 'create' %}Add staff account{% else %}Edit staff account{% endif %} — ARMS{% endblock %}
+{% block content %}
+{# Creation/editing form; role dropdown; inline validation messages #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:staff_list' %}">Staff accounts</a></li>
+        <li><span class="crumbs__current" aria-current="page">{% if mode == 'create' %}Add{% else %}Edit{% endif %}</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">{% if mode == 'create' %}Add staff account{% else %}Edit {{ staff.full_name }}{% endif %}</h1>
+    <p class="page-head__sub">
+      {% if mode == 'create' %}
+        Create a login for a member of staff and assign a role.
+      {% else %}
+        Update the account details. Leave the password fields blank to keep the current password.
+      {% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:staff_list' %}">Back to list</a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">{% if mode == 'create' %}New account{% else %}Account details{% endif %}</h2>
+    <span class="card__hint">Fields marked <span class="field__req" aria-hidden="true">*</span> are required</span>
+  </header>
+
+  <form class="form" method="post" novalidate>
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid">
+      {% include "core/_field.html" with field=form.first_name %}
+      {% include "core/_field.html" with field=form.last_name %}
+      {% include "core/_field.html" with field=form.email %}
+      {% include "core/_field.html" with field=form.phone optional=True %}
+
+      {# Role selection interface: a dropdown of seeded roles, never free text #}
+      <div class="field field--wide{% if form.role.errors %} field--invalid{% endif %}">
+        <label class="field__label" for="id_role">
+          {{ form.role.label }}<span class="field__req" title="Required" aria-hidden="true">*</span>
+        </label>
+        {{ form.role }}
+        <div class="field__help" id="id_role_helptext">
+          Choose from:
+          {% for r in roles %}
+            <span class="chip chip--role">{{ r.RoleName }}</span>
+          {% endfor %}
+        </div>
+        {% if form.role.errors %}
+          <ul class="errorlist field__errors" id="id_role_error">
+            {% for error in form.role.errors %}<li>{{ error }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+
+      {% if mode == 'create' %}
+        {% include "core/_field.html" with field=form.password help_suffix="Stored as a salted hash." %}
+        {% include "core/_field.html" with field=form.confirm_password %}
+      {% else %}
+        {% include "core/_field.html" with field=form.password label="New password" optional=True help_suffix="Leave blank to keep the current password." %}
+        {% include "core/_field.html" with field=form.confirm_password label="Confirm new password" optional=True %}
+      {% endif %}
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">
+        {% if mode == 'create' %}Create account{% else %}Save changes{% endif %}
+      </button>
+      <a class="btn btn--ghost" href="{% url 'core:staff_list' %}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

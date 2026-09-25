@@ -1,0 +1,77 @@
+{% extends "core/base.html" %}
+{% block title %}Services — ARMS{% endblock %}
+{% block content %}
+{# Services catalogue (Administrator only) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Services</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Services</h1>
+    <p class="page-head__sub">{{ services|length }} service{{ services|length|pluralize }} in the catalogue</p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--primary" href="{% url 'core:service_create' %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+           stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      <span>Add service</span>
+    </a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Service catalogue</h2>
+    <span class="card__hint">Cost and duration feed later booking phases</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Services offered by the workshop</caption>
+      <thead>
+        <tr>
+          <th scope="col">Code</th>
+          <th scope="col">Service name</th>
+          <th scope="col" class="num">Base cost</th>
+          <th scope="col" class="num">Est. duration</th>
+          <th scope="col" class="num">Qualified technicians</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for service in services %}
+          <tr>
+            <td class="mono">{{ service.Service_code }}</td>
+            <td class="cell-strong">{{ service.ServiceName }}</td>
+            <td class="num">${{ service.BaseCost }}</td>
+            <td class="num">{{ service.Est_Duration }} min</td>
+            <td class="num">
+              {% if service.technician_count %}
+                <span class="badge badge--count">{{ service.technician_count }}</span>
+              {% else %}
+                <span class="badge badge--muted" title="No technician is qualified for this service yet">None</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5">
+              {% include "core/_empty.html" with title="No services yet" hint="Add one so technicians can be qualified for it." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Assign services to technicians from the technician edit page.
+  </p>
+</section>
+{% endblock %}

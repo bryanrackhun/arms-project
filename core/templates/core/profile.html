@@ -1,0 +1,131 @@
+{% extends "core/base.html" %}
+{% block title %}My profile — ARMS{% endblock %}
+{% block content %}
+{# View own staff account and, where one exists, own technician record — #}
+{# allowed for every role. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">My profile</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">My profile</h1>
+    <p class="page-head__sub">Your own account details, visible to you only</p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:dashboard' %}">Back to dashboard</a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Staff account</h2>
+    <span class="card__hint">Account #{{ staff.StaffID }}</span>
+  </header>
+
+  <div class="profile-hero">
+    <span class="profile-hero__avatar" aria-hidden="true">{{ staff.FirstName|slice:":1"|upper }}{{ staff.LastName|slice:":1"|upper }}</span>
+    <div class="profile-hero__text">
+      <p class="profile-hero__name">{{ staff.FirstName }} {{ staff.LastName }}</p>
+      <p class="profile-hero__meta">
+        <span class="badge badge--role">{{ staff.RoleID.RoleName }}</span>
+        <a class="profile-hero__mail" href="mailto:{{ staff.Email }}">{{ staff.Email }}</a>
+      </p>
+    </div>
+    {% if staff.IsActive %}
+      <span class="badge badge--active">Active</span>
+    {% else %}
+      <span class="badge badge--inactive">Deactivated</span>
+    {% endif %}
+  </div>
+
+  <dl class="dl-grid">
+    <div class="dl-grid__row">
+      <dt>Name</dt>
+      <dd>{{ staff.FirstName }} {{ staff.LastName }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Email</dt>
+      <dd>{{ staff.Email }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Phone</dt>
+      <dd>{{ staff.Phone|default:"—" }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Role</dt>
+      <dd><span class="badge badge--role">{{ staff.RoleID.RoleName }}</span></dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Status</dt>
+      <dd>
+        {% if staff.IsActive %}<span class="badge badge--active">Active</span>
+        {% else %}<span class="badge badge--inactive">Deactivated</span>{% endif %}
+      </dd>
+    </div>
+  </dl>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Contact an Administrator to change your account details or password.
+  </p>
+</section>
+
+{% if technician %}
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Technician record</h2>
+      <span class="card__hint">Record #{{ technician.TechnicianID }}</span>
+    </header>
+
+    <dl class="dl-grid dl-grid--stats">
+      <div class="dl-grid__row">
+        <dt>Technician ID</dt>
+        <dd>{{ technician.TechnicianID }}</dd>
+      </div>
+      <div class="dl-grid__row">
+        <dt>Hourly rate</dt>
+        <dd class="dl-grid__strong">${{ technician.Hourly_rate }} / hr</dd>
+      </div>
+      <div class="dl-grid__row">
+        <dt>Qualified for</dt>
+        <dd class="dl-grid__strong">{{ assigned_services|length }} service{{ assigned_services|length|pluralize }}</dd>
+      </div>
+    </dl>
+
+    <h3 class="card__subtitle">Assigned services</h3>
+    {% if assigned_services %}
+      <div class="table-wrap">
+        <table class="data">
+          <caption class="sr-only">Services this technician is qualified to perform</caption>
+          <thead>
+            <tr>
+              <th scope="col">Code</th>
+              <th scope="col">Service</th>
+              <th scope="col" class="num">Base cost</th>
+              <th scope="col" class="num">Est. duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for service in assigned_services %}
+              <tr>
+                <td class="mono">{{ service.Service_code }}</td>
+                <td>{{ service.ServiceName }}</td>
+                <td class="num">${{ service.BaseCost }}</td>
+                <td class="num">{{ service.Est_Duration }} min</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      {% include "core/_empty.html" with title="No services assigned yet" hint="An Administrator assigns services to technicians." %}
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,112 @@
+{% extends "core/base.html" %}
+{% block title %}Vehicles — ARMS{% endblock %}
+{% block content %}
+{# Vehicle records: searchable table (Receptionist, Administrator) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Vehicles</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Vehicles</h1>
+    <p class="page-head__sub">
+      {{ vehicles|length }} vehicle record{{ vehicles|length|pluralize }}
+      {% if query %} matching &ldquo;{{ query }}&rdquo;{% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:vehicle_create' %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+           stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      <span>Add vehicle</span>
+    </a>
+    <a class="btn btn--primary" href="{% url 'core:vehicle_check_in' %}">Check a vehicle in</a>
+  </div>
+</div>
+
+<section class="card card--filters">
+  <h2 class="sr-only">Search vehicles</h2>
+  <form class="filter-bar" method="get" action="{% url 'core:vehicle_list' %}">
+    <div class="filter-bar__field filter-bar__field--grow">
+      <label class="filter-bar__label" for="q">Search</label>
+      <input class="control" type="search" id="q" name="q" value="{{ query }}"
+             placeholder="Registration number or VIN" autocomplete="off">
+    </div>
+
+    <div class="filter-bar__actions">
+      <button class="btn btn--primary" type="submit">Search</button>
+      {% if query %}
+        <a class="btn btn--ghost" href="{% url 'core:vehicle_list' %}">Reset</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Vehicle records</h2>
+    {% if query %}
+      <span class="card__hint">Filtered results</span>
+    {% else %}
+      <span class="card__hint">{{ vehicles|length }} total</span>
+    {% endif %}
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Recorded vehicles with identifiers, details and appointments</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">ID</th>
+          <th scope="col">Registration</th>
+          <th scope="col">VIN</th>
+          <th scope="col">Make / model</th>
+          <th scope="col" class="num">Year</th>
+          <th scope="col">Colour</th>
+          <th scope="col">Photo</th>
+          <th scope="col" class="th-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for vehicle in vehicles %}
+          <tr>
+            <td class="mono num">{{ vehicle.VehicleID }}</td>
+            <td class="cell-strong">{{ vehicle.LicensePlate|default:"—" }}</td>
+            <td class="mono">{{ vehicle.VIN|default:"—" }}</td>
+            <td>{{ vehicle.Make }} {{ vehicle.Model }}</td>
+            <td class="num">{{ vehicle.Year|default:"—" }}</td>
+            <td>{{ vehicle.Colour|default:"—" }}</td>
+            <td>
+              {% if vehicle.Image %}
+                <span class="badge badge--active">Yes</span>
+              {% else %}
+                <span class="badge badge--muted">None</span>
+              {% endif %}
+            </td>
+            <td class="actions">
+              <a class="btn btn--ghost btn--sm" href="{% url 'core:vehicle_detail' vehicle.VehicleID %}">Open</a>
+              <a class="btn btn--ghost btn--sm" href="{% url 'core:vehicle_edit' vehicle.VehicleID %}">Edit</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="8">
+              {% include "core/_empty.html" with title="No vehicles found" hint="Check a vehicle in when it arrives, or add its record here." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Check-in finds an existing record by VIN or registration — returning vehicles are never duplicated.
+  </p>
+</section>
+{% endblock %}

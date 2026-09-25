@@ -1,0 +1,75 @@
+{% extends "core/base.html" %}
+{% block title %}{% if mode == 'edit' %}Edit appointment{% else %}New appointment{% endif %} — ARMS{% endblock %}
+{% block content %}
+{# Receptionist appointment create/edit: customer, service, slot, optional vehicle #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:appointment_list' %}">Appointments</a></li>
+        <li><span class="crumbs__current" aria-current="page">{% if mode == 'edit' %}Edit #{{ appointment.pk }}{% else %}New{% endif %}</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">{% if mode == 'edit' %}Edit appointment #{{ appointment.pk }}{% else %}New appointment{% endif %}</h1>
+    {% if mode == 'edit' %}
+      <p class="page-head__sub">Book a slot on a customer's behalf — half-hour slots, 08:00 to 17:30</p>
+    {% else %}
+      <p class="page-head__sub">
+        Record a booking request on a customer's behalf. It is saved as
+        <strong>Pending</strong> — half-hour slots, 08:00 to 17:30.
+      </p>
+    {% endif %}
+  </div>
+  <div class="page-head__actions">
+    {% if mode == 'edit' %}
+      <a class="btn btn--ghost" href="{% url 'core:appointment_detail' appointment.pk %}">Back to appointment</a>
+    {% else %}
+      <a class="btn btn--ghost" href="{% url 'core:appointment_list' %}">Back to list</a>
+    {% endif %}
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Booking details</h2>
+    <span class="card__hint">Fields marked <span class="field__req" aria-hidden="true">*</span> are required</span>
+  </header>
+
+  <form class="form" method="post" novalidate>
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid">
+      {% include "core/_field.html" with field=form.first_name %}
+      {% include "core/_field.html" with field=form.last_name %}
+      {% include "core/_field.html" with field=form.phone %}
+      {% include "core/_field.html" with field=form.email %}
+      {% include "core/_field.html" with field=form.service wide=True %}
+      {% include "core/_field.html" with field=form.appointment_date %}
+      {% include "core/_field.html" with field=form.appointment_time %}
+      {% include "core/_field.html" with field=form.vehicle wide=True %}
+      {% include "core/_field.html" with field=form.notes wide=True %}
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">
+        {% if mode == 'edit' %}Save changes{% else %}Create appointment{% endif %}
+      </button>
+      {% if mode == 'edit' %}
+        <a class="btn btn--ghost" href="{% url 'core:appointment_detail' appointment.pk %}">Cancel</a>
+      {% else %}
+        <a class="btn btn--ghost" href="{% url 'core:appointment_list' %}">Cancel</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+{% endblock %}

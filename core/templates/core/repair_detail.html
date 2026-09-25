@@ -1,0 +1,300 @@
+{% extends "core/base.html" %}
+{% block title %}Repair job #{{ repair.pk }} — ARMS{% endblock %}
+{% block content %}
+{# One repair job: assignments, inspection and progress actions (FR6-FR8) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li>
+          {% if role_name == 'Technician' %}
+            <a class="crumbs__link" href="{% url 'core:my_repairs' %}">My repairs</a>
+          {% else %}
+            <a class="crumbs__link" href="{% url 'core:repair_list' %}">Repair jobs</a>
+          {% endif %}
+        </li>
+        <li><span class="crumbs__current" aria-current="page">#{{ repair.pk }}</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Repair job #{{ repair.pk }}</h1>
+    <p class="page-head__sub">{{ repair.customer_name }} — {{ repair.service.ServiceName }}</p>
+  </div>
+  <div class="page-head__actions">
+    {% if role_name == 'Technician' %}
+      <a class="btn btn--ghost" href="{% url 'core:my_repairs' %}">Back to my repairs</a>
+    {% else %}
+      <a class="btn btn--ghost" href="{% url 'core:repair_list' %}">Back to board</a>
+    {% endif %}
+    {% if repair.vehicle %}
+      <a class="btn btn--ghost" href="{% url 'core:vehicle_detail' repair.vehicle.VehicleID %}">View vehicle</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if not can_manage and role_name == 'Receptionist' %}
+  <div class="alert alert--info" role="note">
+    <span class="alert__icon" aria-hidden="true">&#8505;</span>
+    <div class="alert__body">
+      <p class="alert__text">
+        Read-only: repair jobs are created and progressed by the workshop
+        administrator and the assigned technician.
+      </p>
+    </div>
+  </div>
+{% endif %}
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Job</h2>
+    {% include "core/_repair_status.html" %}
+  </header>
+
+  <dl class="dl-grid">
+    <div class="dl-grid__row">
+      <dt>Appointment</dt>
+      <dd class="dl-grid__strong">
+        <a href="{% url 'core:appointment_detail' repair.AppointmentID.AppointmentID %}">
+          #{{ repair.AppointmentID.AppointmentID }} — {{ repair.AppointmentID.slot }}
+        </a>
+      </dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Customer</dt>
+      <dd class="dl-grid__strong">{{ repair.customer_name }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Requested service</dt>
+      <dd>{{ repair.service.ServiceName }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Vehicle</dt>
+      <dd>
+        {% if repair.vehicle %}
+          <a href="{% url 'core:vehicle_detail' repair.vehicle.VehicleID %}">{{ repair.vehicle.display_name }}</a>
+          <span class="badge badge--muted">{{ repair.vehicle.Make }} {{ repair.vehicle.Model }}</span>
+        {% else %}
+          <span class="badge badge--muted">Not linked</span>
+        {% endif %}
+      </dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Priority</dt>
+      <dd>{% include "core/_repair_badges.html" %}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Technician</dt>
+      <dd>
+        {% if repair.TechnicianID %}
+          {{ repair.TechnicianID.full_name }}
+        {% else %}
+          <span class="badge badge--muted">Not assigned yet</span>
+        {% endif %}
+      </dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Service bay</dt>
+      <dd>
+        {% if repair.BayID %}
+          {{ repair.BayID.BayName }}
+          <span class="badge {% if repair.BayID.is_available %}badge--active{% else %}badge--pending{% endif %}">
+            {{ repair.BayID.Status }}
+          </span>
+        {% else %}
+          <span class="badge badge--muted">Not assigned yet</span>
+        {% endif %}
+      </dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Created</dt>
+      <dd>{{ repair.CreatedAt }}</dd>
+    </div>
+  </dl>
+</section>
+
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Progress</h2>
+    <span class="card__hint">Not Started &rarr; In Progress &rarr; Completed</span>
+  </header>
+
+  {# The three steps rendered as a track, so where a job stands is obvious
+     without reading the status badge. Marked up as a list for screen readers,
+     using the same stat tiles the dashboard uses for its counters. #}
+  <div class="stats">
+    {% for step in progress_steps %}
+      <article class="stat{% if step.state == 'current' %} stat--brand{% endif %}">
+        <div class="stat__num">{{ forloop.counter }}</div>
+        <div class="stat__lbl">{{ step.label }}</div>
+        <div class="stat__meta">
+          {% if step.state == 'done' %}
+            <span class="badge badge--active">Reached</span>
+          {% elif step.state == 'current' %}
+            <span class="badge badge--pending" aria-current="step">Current</span>
+          {% else %}
+            <span class="badge badge--muted">Not yet</span>
+          {% endif %}
+        </div>
+      </article>
+    {% endfor %}
+  </div>
+
+  {% if can_manage %}
+    {% if allowed_transitions %}
+      <h3 class="card__subtitle">Update status</h3>
+      <form class="form form--inline" method="post"
+            action="{% url 'core:repair_status' repair.pk %}">
+        {% csrf_token %}
+        <div class="form-grid form-grid--inline">
+          {% include "core/_field.html" with field=status_form.status %}
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Update status</button>
+        </div>
+      </form>
+      <p class="note">
+        <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+        </svg>
+        Steps cannot be skipped — a job must pass through In Progress before it
+        can be Completed. Completing it releases its service bay automatically.
+      </p>
+    {% else %}
+      <p class="note">
+        This job is <strong>{{ repair.Status }}</strong>; no further status
+        changes are possible.
+      </p>
+    {% endif %}
+  {% elif role_name == 'Technician' %}
+    <p class="note">
+      You are not the technician assigned to this job, so its status cannot be
+      changed from here.
+    </p>
+  {% endif %}
+</section>
+
+{% if is_admin %}
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Assignment</h2>
+      <span class="card__hint">Administrator only</span>
+    </header>
+
+    {% if repair.is_completed %}
+      <p class="note">
+        A completed job is closed to re-assignment — its technician and bay are
+        the record Timebox 4 will invoice and pay against.
+      </p>
+    {% else %}
+      <form class="form form--inline" method="post"
+            action="{% url 'core:repair_assign' repair.pk %}">
+        {% csrf_token %}
+        <div class="form-grid form-grid--inline">
+          {% include "core/_field.html" with field=assignment_form.technician %}
+          {% include "core/_field.html" with field=assignment_form.bay %}
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Update assignment</button>
+        </div>
+      </form>
+
+      <p class="note">
+        <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+        </svg>
+        Only technicians qualified for <strong>{{ repair.service.ServiceName }}</strong>
+        are offered
+        {% if qualified_technicians %}
+          ({{ qualified_technicians|length }} qualified).
+        {% else %}
+          — none is qualified yet, so assign one from the technicians page first.
+        {% endif %}
+        Only Available bays can be taken; assigning one marks it Occupied until
+        this job completes.
+      </p>
+    {% endif %}
+  </section>
+{% endif %}
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Vehicle inspection</h2>
+    {% if inspection %}
+      <span class="badge badge--active">Recorded</span>
+    {% else %}
+      <span class="badge badge--muted">Not recorded yet</span>
+    {% endif %}
+  </header>
+
+  {% if inspection %}
+    <dl class="dl-grid">
+      <div class="dl-grid__row">
+        <dt>Vehicle</dt>
+        <dd>{{ inspection.VehicleID.display_name }}</dd>
+      </div>
+      <div class="dl-grid__row">
+        <dt>Recorded</dt>
+        <dd>{{ inspection.CreatedAt }}</dd>
+      </div>
+      <div class="dl-grid__row">
+        <dt>Condition</dt>
+        <dd>{{ inspection.Description|linebreaksbr }}</dd>
+      </div>
+      <div class="dl-grid__row">
+        <dt>Photographs</dt>
+        <dd>
+          {% if inspection.images %}
+            {{ inspection.image_count }} of {{ max_inspection_images }} attached
+          {% else %}
+            <span class="badge badge--muted">None</span>
+          {% endif %}
+        </dd>
+      </div>
+    </dl>
+
+    {% if inspection.images %}
+      <div class="tile-grid">
+        {% for image in inspection.images %}
+          <a class="tile" href="{{ image.url }}" target="_blank" rel="noopener">
+            <span class="tile__body">
+              <span class="tile__title">Photograph {{ forloop.counter }}</span>
+              <span class="tile__desc">Opens in a new tab</span>
+            </span>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if can_manage %}
+      <div class="form-actions">
+        <a class="btn btn--ghost" href="{% url 'core:inspection_edit' repair.pk %}">Edit inspection</a>
+      </div>
+    {% endif %}
+  {% else %}
+    {% if can_manage %}
+      {% if repair.TechnicianID_id %}
+        <p class="card__text">
+          No inspection has been recorded for this job yet. The assigned
+          technician documents the vehicle's condition — a written description
+          and up to {{ max_inspection_images }} photographs — once they take it on.
+        </p>
+        <div class="form-actions">
+          <a class="btn btn--primary" href="{% url 'core:inspection_create' repair.pk %}">Record inspection</a>
+        </div>
+      {% else %}
+        <p class="note">
+          A technician must be assigned to this job before its inspection can be
+          recorded — the inspection is that technician's own documentation of the
+          vehicle.
+        </p>
+      {% endif %}
+    {% else %}
+      <p class="note">No inspection has been recorded for this job yet.</p>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}
+

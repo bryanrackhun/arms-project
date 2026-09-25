@@ -1,0 +1,120 @@
+{% extends "core/base.html" %}
+{% block title %}Technicians — ARMS{% endblock %}
+{% block content %}
+{# Technician listing (Administrator only) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Technicians</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Technicians</h1>
+    <p class="page-head__sub">{{ technicians|length }} record{{ technicians|length|pluralize }}</p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--primary" href="{% url 'core:technician_create' %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+           stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      <span>Add technician record</span>
+    </a>
+  </div>
+</div>
+
+{% if not available_count %}
+  <div class="alert alert--warning" role="status">
+    <span class="alert__icon" aria-hidden="true">&#9888;</span>
+    <div class="alert__body">
+      <p class="alert__text">
+        There are no active Technician-role staff accounts without a technician
+        record. Create the staff account first on the
+        <a class="alert__link" href="{% url 'core:staff_create' %}">Add staff account</a> page.
+      </p>
+    </div>
+  </div>
+{% endif %}
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Technician records</h2>
+    <span class="card__hint">Each record links to one staff account</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Technicians with hourly rate, qualifications and account status</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">ID</th>
+          <th scope="col">Name</th>
+          <th scope="col">Email</th>
+          <th scope="col" class="num">Hourly rate</th>
+          <th scope="col" class="num">Services</th>
+          <th scope="col">Account status</th>
+          <th scope="col" class="th-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for technician in technicians %}
+          <tr{% if not technician.StaffID.IsActive %} class="row--muted"{% endif %}>
+            <td class="mono num">{{ technician.TechnicianID }}</td>
+            <td>
+              <span class="cell-name">
+                <span class="cell-name__avatar" aria-hidden="true">{{ technician.StaffID.full_name|slice:":1"|upper }}</span>
+                <span class="cell-name__text">{{ technician.StaffID.full_name }}</span>
+              </span>
+            </td>
+            <td><a class="cell-mail" href="mailto:{{ technician.StaffID.Email }}">{{ technician.StaffID.Email }}</a></td>
+            <td class="num cell-strong">${{ technician.Hourly_rate }}<span class="cell-unit">/hr</span></td>
+            <td class="num">
+              {% if technician.service_count %}
+                <span class="badge badge--count">{{ technician.service_count }}</span>
+              {% else %}
+                <span class="badge badge--muted">None</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if technician.StaffID.IsActive %}
+                <span class="badge badge--active">Active</span>
+              {% else %}
+                <span class="badge badge--inactive">Deactivated</span>
+              {% endif %}
+            </td>
+            <td class="actions">
+              <a class="btn btn--ghost btn--sm" href="{% url 'core:technician_edit' technician.TechnicianID %}">
+                Edit &amp; assign services
+              </a>
+              {% if technician.StaffID.IsActive %}
+                {# the confirmation text sits in an attribute, so apostrophes in #}
+                {# a name cannot break out of the script string #}
+                <form class="inline-form" method="post"
+                      action="{% url 'core:technician_deactivate' technician.TechnicianID %}"
+                      data-confirm="Deactivate {{ technician.StaffID.full_name }}?">
+                  {% csrf_token %}
+                  <button class="btn btn--danger btn--sm" type="submit">Deactivate</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7">
+              {% include "core/_empty.html" with title="No technician records yet" hint="Add one to link a Technician-role staff account to an hourly rate." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Deactivating a technician deactivates the linked staff account; the record
+    itself is never deleted.
+  </p>
+</section>
+{% endblock %}

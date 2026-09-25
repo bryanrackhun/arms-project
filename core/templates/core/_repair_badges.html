@@ -1,0 +1,8 @@
+{# Repair priority badge. Usage: {% include "core/_repair_badges.html" %} #}
+{# Urgent is drawn with the same emphasis as a pending appointment, because both #}
+{# mean "look at this first". #}
+{% if repair.RepairPriority == 'Urgent' %}
+  <span class="badge badge--pending" title="Urgent priority">{{ repair.RepairPriority }}</span>
+{% else %}
+  <span class="badge badge--role">{{ repair.RepairPriority }}</span>
+{% endif %}

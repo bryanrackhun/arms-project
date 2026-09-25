@@ -1,0 +1,48 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+arms_env/
+.venv/
+venv/
+env/
+
+# Django
+*.log
+arms_errors.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/media/
+/staticfiles/
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+
+# Packaging / build output
+build/
+dist/
+*.egg-info/
+*.egg
+*.zip
+*.tar.gz
+
+# Test and tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Editors and OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,21 @@
+{# Root-level error template. Django's default handler404/handler500 look up the #}
+{# names "404.html" / "500.html" at the TOP LEVEL of each template directory, so #}
+{# these two files must live in core/templates/, not core/templates/core/. #}
+{# Both extend the shell and reuse the same status-card markup. #}
+{% extends "core/base.html" %}
+{% block title %}Page not found — ARMS{% endblock %}
+{% block content %}
+<div class="status-card">
+  <div class="status-card__code" aria-hidden="true">404</div>
+  <h1 class="status-card__title">Page not found</h1>
+  <p class="status-card__lead">
+    That page does not exist, or the address was typed incorrectly. Nothing has
+    been changed.
+  </p>
+
+  <div class="form-actions form-actions--center">
+    <a class="btn btn--primary" href="{% url 'core:dashboard' %}">Back to dashboard</a>
+    <a class="btn btn--ghost" href="{% url 'core:login' %}">Sign in</a>
+  </div>
+</div>
+{% endblock %}

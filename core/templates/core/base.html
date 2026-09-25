@@ -1,0 +1,135 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Automotive Repair Management System — staff accounts, roles, technicians and services.">
+  <title>{% block title %}ARMS{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'core/css/arms.css' %}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+
+<a class="skip-link" href="#main">Skip to main content</a>
+{% if identity %}
+  {# Active navigation is derived from the resolved route name, so no view #}
+  {# has to pass an "active page" flag into the context. #}
+  {% with current=request.resolver_match.url_name %}
+  <header class="topbar">
+    <div class="topbar__inner">
+      <a class="brand" href="{% url 'core:dashboard' %}" aria-label="ARMS — back to dashboard">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.7 6.3a4 4 0 0 0 5 5l-8.4 8.4a2.1 2.1 0 0 1-3-3Z"/><path d="M14.7 6.3 17.4 3.6"/>
+          </svg>
+        </span>
+        <span class="brand__text">
+          <span class="brand__name">ARMS</span>
+          <span class="brand__sub">Repair Management</span>
+        </span>
+      </a>
+
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="nav-toggle__bar" aria-hidden="true"></span>
+        <span class="nav-toggle__bar" aria-hidden="true"></span>
+        <span class="nav-toggle__bar" aria-hidden="true"></span>
+      </button>
+
+      <nav class="topnav" id="primary-nav" aria-label="Primary">
+        <ul class="topnav__list">
+          <li><a class="topnav__link{% if current == 'dashboard' %} is-active{% endif %}"
+                 href="{% url 'core:dashboard' %}"{% if current == 'dashboard' %} aria-current="page"{% endif %}>Dashboard</a></li>
+          <li><a class="topnav__link{% if current == 'profile' %} is-active{% endif %}"
+                 href="{% url 'core:profile' %}"{% if current == 'profile' %} aria-current="page"{% endif %}>My profile</a></li>
+          {% if identity.role_name == 'Receptionist' or identity.role_name == 'Administrator' %}
+            {# the booking desk: appointments and vehicle records (Timebox 2) #}
+            <li><a class="topnav__link{% if current|slice:":11" == 'appointment' %} is-active{% endif %}"
+                   href="{% url 'core:appointment_list' %}"{% if current|slice:":11" == 'appointment' %} aria-current="page"{% endif %}>Appointments</a></li>
+            <li><a class="topnav__link{% if current|slice:":7" == 'vehicle' %} is-active{% endif %}"
+                   href="{% url 'core:vehicle_list' %}"{% if current|slice:":7" == 'vehicle' %} aria-current="page"{% endif %}>Vehicles</a></li>
+          {% endif %}
+          {% if identity.role_name == 'Administrator' or identity.role_name == 'Receptionist' %}
+            {# repair job board: administrators manage, receptionists read (Timebox 3) #}
+            <li><a class="topnav__link{% if current|slice:":6" == 'repair' %} is-active{% endif %}"
+                   href="{% url 'core:repair_list' %}"{% if current|slice:":6" == 'repair' %} aria-current="page"{% endif %}>Repairs</a></li>
+          {% endif %}
+          {% if identity.role_name == 'Technician' %}
+            {# a technician's whole view of this module: their own jobs (Timebox 3) #}
+            <li><a class="topnav__link{% if current == 'my_repairs' or current|slice:":6" == 'repair' or current|slice:":10" == 'inspection' %} is-active{% endif %}"
+                   href="{% url 'core:my_repairs' %}"{% if current == 'my_repairs' %} aria-current="page"{% endif %}>My repairs</a></li>
+          {% endif %}
+          {% if identity.role_name == 'Administrator' %}
+            {# role-based authorisation: management links offered only to the #}
+            {# role that may actually open them, so nothing bounces to 403 #}
+            <li><a class="topnav__link{% if current|slice:":3" == 'bay' %} is-active{% endif %}"
+                   href="{% url 'core:bay_list' %}"{% if current|slice:":3" == 'bay' %} aria-current="page"{% endif %}>Bays</a></li>
+            <li><a class="topnav__link{% if current|slice:":5" == 'staff' %} is-active{% endif %}"
+                   href="{% url 'core:staff_list' %}"{% if current|slice:":5" == 'staff' %} aria-current="page"{% endif %}>Staff</a></li>
+            <li><a class="topnav__link{% if current|slice:":10" == 'technician' %} is-active{% endif %}"
+                   href="{% url 'core:technician_list' %}"{% if current|slice:":10" == 'technician' %} aria-current="page"{% endif %}>Technicians</a></li>
+            <li><a class="topnav__link{% if current|slice:":7" == 'service' %} is-active{% endif %}"
+                   href="{% url 'core:service_list' %}"{% if current|slice:":7" == 'service' %} aria-current="page"{% endif %}>Services</a></li>
+            <li><a class="topnav__link{% if current == 'role_list' %} is-active{% endif %}"
+                   href="{% url 'core:role_list' %}"{% if current == 'role_list' %} aria-current="page"{% endif %}>Roles</a></li>
+          {% endif %}
+        </ul>
+      </nav>
+
+      <div class="topbar__user">
+        <span class="userchip">
+          <span class="userchip__avatar" aria-hidden="true">{{ identity.staff_name|slice:":1"|upper|default:"A" }}</span>
+          <span class="userchip__meta">
+            <span class="userchip__name">{{ identity.staff_name|default:"Signed in" }}</span>
+            <span class="badge badge--role">{{ identity.role_name }}</span>
+          </span>
+        </span>
+        <form class="logout" method="post" action="{% url 'core:logout' %}">
+          {% csrf_token %}
+          <button class="btn btn--logout" type="submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>
+            </svg>
+            <span>Log out</span>
+          </button>
+        </form>
+      </div>
+    </div>
+  </header>
+  {% endwith %}
+{% endif %}
+
+<main class="page" id="main" tabindex="-1">
+  {% if messages %}
+    <div class="messages" role="status" aria-live="polite">
+      {% for message in messages %}
+        <div class="messages__item messages__item--{{ message.tags|default:'info' }}">
+          <span class="messages__icon" aria-hidden="true">
+            {% if message.tags == 'error' %}&#10005;{% elif message.tags == 'warning' %}&#9888;{% else %}&#10003;{% endif %}
+          </span>
+          <span class="messages__text">{{ message }}</span>
+          <button class="messages__close" type="button" aria-label="Dismiss notification">&times;</button>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+</main>
+
+{% if identity %}
+  <footer class="site-footer">
+    <div class="site-footer__inner">
+      <span>ARMS — Automotive Repair Management System</span>
+      <span class="site-footer__sep" aria-hidden="true">&middot;</span>
+      <span>Sessions expire after 30 minutes of inactivity</span>
+    </div>
+  </footer>
+{% endif %}
+
+<script src="{% static 'core/js/arms.js' %}" defer></script>
+</body>
+</html>

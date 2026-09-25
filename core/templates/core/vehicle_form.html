@@ -1,0 +1,72 @@
+{% extends "core/base.html" %}
+{% block title %}{% if mode == 'edit' %}Edit vehicle{% else %}Add vehicle{% endif %} — ARMS{% endblock %}
+{% block content %}
+{# Vehicle record create/edit (Receptionist, Administrator) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:vehicle_list' %}">Vehicles</a></li>
+        <li><span class="crumbs__current" aria-current="page">{% if mode == 'edit' %}Edit #{{ vehicle.VehicleID }}{% else %}Add{% endif %}</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">{% if mode == 'edit' %}Edit vehicle #{{ vehicle.VehicleID }}{% else %}Add vehicle{% endif %}</h1>
+    <p class="page-head__sub">
+      {% if mode == 'edit' %}
+        Correct the stored record — at least a VIN or a registration number must remain
+      {% else %}
+        Record a vehicle directly; use check-in when it arrives at the desk
+      {% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    {% if mode == 'edit' %}
+      <a class="btn btn--ghost" href="{% url 'core:vehicle_detail' vehicle.VehicleID %}">Back to vehicle</a>
+    {% else %}
+      <a class="btn btn--ghost" href="{% url 'core:vehicle_list' %}">Back to list</a>
+    {% endif %}
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Vehicle details</h2>
+    <span class="card__hint">Fields marked <span class="field__req" aria-hidden="true">*</span> are required</span>
+  </header>
+
+  <form class="form" method="post" enctype="multipart/form-data" novalidate>
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid">
+      {% include "core/_field.html" with field=form.vin %}
+      {% include "core/_field.html" with field=form.license_plate %}
+      {% include "core/_field.html" with field=form.make %}
+      {% include "core/_field.html" with field=form.model %}
+      {% include "core/_field.html" with field=form.year %}
+      {% include "core/_field.html" with field=form.colour %}
+      {% include "core/_field.html" with field=form.image wide=True %}
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">
+        {% if mode == 'edit' %}Save changes{% else %}Record vehicle{% endif %}
+      </button>
+      {% if mode == 'edit' %}
+        <a class="btn btn--ghost" href="{% url 'core:vehicle_detail' vehicle.VehicleID %}">Cancel</a>
+      {% else %}
+        <a class="btn btn--ghost" href="{% url 'core:vehicle_list' %}">Cancel</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+{% endblock %}

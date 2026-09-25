@@ -1,0 +1,72 @@
+{% extends "core/base.html" %}
+{% block title %}Roles — ARMS{% endblock %}
+{% block content %}
+{# Roles: read-only listing of the three seeded roles (Administrator only) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Roles</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">User roles</h1>
+    <p class="page-head__sub">Seeded at setup time — the role set is fixed</p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:staff_list' %}">Staff accounts</a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Roles</h2>
+    <span class="card__hint">{{ roles|length }} role{{ roles|length|pluralize }}</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">The fixed set of system roles and what each may do</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">ID</th>
+          <th scope="col">Role</th>
+          <th scope="col" class="num">Staff accounts</th>
+          <th scope="col">Functions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for role in roles %}
+          <tr>
+            <td class="mono num">{{ role.RoleID }}</td>
+            <td><span class="badge badge--role">{{ role.RoleName }}</span></td>
+            <td class="num">{{ role.staff_count }}</td>
+            <td>
+              {% if role.RoleName == 'Administrator' %}
+                All management functions, own profile
+              {% else %}
+                Dashboard, own profile
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="4">
+              {% include "core/_empty.html" with title="No roles found" hint="Run the setup command to seed the three system roles." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 3 4.5 6.2v5.1c0 4.4 3.1 8.3 7.5 9.7 4.4-1.4 7.5-5.3 7.5-9.7V6.2Z"/>
+    </svg>
+    A role in use cannot be deleted. Access is controlled through the role
+    dropdown on the staff form.
+  </p>
+</section>
+{% endblock %}

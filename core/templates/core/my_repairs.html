@@ -1,0 +1,116 @@
+{% extends "core/base.html" %}
+{% block title %}My repairs — ARMS{% endblock %}
+{% block content %}
+{# The technician's own job board (FR8) - scoped to jobs assigned to them #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">My repairs</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">My repairs</h1>
+    <p class="page-head__sub">
+      {{ repairs|length }} job{{ repairs|length|pluralize }} assigned to
+      {{ technician.full_name }}
+    </p>
+  </div>
+</div>
+
+<div class="stats">
+  <article class="stat">
+    <div class="stat__num">{{ not_started }}</div>
+    <div class="stat__lbl">Not started</div>
+    <div class="stat__meta">waiting to be picked up</div>
+  </article>
+  <article class="stat stat--brand">
+    <div class="stat__num">{{ in_progress }}</div>
+    <div class="stat__lbl">In progress</div>
+    <div class="stat__meta">on the floor right now</div>
+  </article>
+  <article class="stat">
+    <div class="stat__num">{{ completed }}</div>
+    <div class="stat__lbl">Completed</div>
+    <div class="stat__meta">finished work</div>
+  </article>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Assigned jobs</h2>
+    <span class="card__hint">Only jobs assigned to you are listed</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Repair jobs assigned to this technician</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">Job</th>
+          <th scope="col">Customer</th>
+          <th scope="col">Service</th>
+          <th scope="col">Vehicle</th>
+          <th scope="col">Bay</th>
+          <th scope="col">Priority</th>
+          <th scope="col">Inspection</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="th-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for repair in repairs %}
+          <tr>
+            <td class="mono num">{{ repair.RepairID }}</td>
+            <td class="cell-strong">{{ repair.customer_name }}</td>
+            <td>{{ repair.service.ServiceName }}</td>
+            <td>
+              {% if repair.vehicle %}
+                <a href="{% url 'core:vehicle_detail' repair.vehicle.VehicleID %}">{{ repair.vehicle.display_name }}</a>
+              {% else %}
+                <span class="badge badge--muted">Not linked</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if repair.BayID %}{{ repair.BayID.BayName }}{% else %}
+                <span class="badge badge--muted">None</span>
+              {% endif %}
+            </td>
+            <td>{% include "core/_repair_badges.html" %}</td>
+            <td>
+              {% if repair.is_inspected %}
+                <span class="badge badge--active">Recorded</span>
+              {% else %}
+                <span class="badge badge--pending">Needed</span>
+              {% endif %}
+            </td>
+            <td>{% include "core/_repair_status.html" %}</td>
+            <td class="actions">
+              <a class="btn btn--ghost btn--sm" href="{% url 'core:repair_detail' repair.RepairID %}">Open</a>
+              {% if not repair.is_inspected and not repair.is_completed %}
+                <a class="btn btn--primary btn--sm" href="{% url 'core:inspection_create' repair.RepairID %}">Inspect</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="9">
+              {% include "core/_empty.html" with title="No jobs assigned to you yet" hint="The administrator assigns repair jobs to technicians; yours will appear here." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Record the inspection once you take the job on, then move it through
+    Not Started &rarr; In Progress &rarr; Completed. Completing a job releases its
+    service bay automatically.
+  </p>
+</section>
+{% endblock %}

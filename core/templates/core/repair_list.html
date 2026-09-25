@@ -1,0 +1,150 @@
+{% extends "core/base.html" %}
+{% block title %}Repair jobs — ARMS{% endblock %}
+{% block content %}
+{# Repair job board (Administrator manages, Receptionist reads) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Repair jobs</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Repair jobs</h1>
+    <p class="page-head__sub">
+      {{ repairs|length }} job{{ repairs|length|pluralize }}
+      {% if status_filter or priority_filter or technician_filter %} matching the current filter{% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    {% if is_admin %}
+      <a class="btn btn--ghost" href="{% url 'core:bay_list' %}">Service bays</a>
+      {# Only a checked-in appointment can start a job, so the title explains a
+         button that has nothing to offer yet rather than leading to an empty form. #}
+      <a class="btn btn--primary" href="{% url 'core:repair_create' %}"
+         {% if not eligible_count %}title="No checked-in appointment is waiting for a repair job"{% endif %}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+             stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        <span>New repair job</span>
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+<section class="card card--filters">
+  <h2 class="sr-only">Filter repair jobs</h2>
+  <form class="filter-bar" method="get" action="{% url 'core:repair_list' %}">
+    <div class="filter-bar__field">
+      <label class="filter-bar__label" for="{{ filter_form.status.id_for_label }}">Status</label>
+      {{ filter_form.status }}
+    </div>
+    <div class="filter-bar__field">
+      <label class="filter-bar__label" for="{{ filter_form.priority.id_for_label }}">Priority</label>
+      {{ filter_form.priority }}
+    </div>
+    <div class="filter-bar__field">
+      <label class="filter-bar__label" for="{{ filter_form.technician.id_for_label }}">Technician</label>
+      {{ filter_form.technician }}
+    </div>
+    <div class="filter-bar__actions">
+      <button class="btn btn--primary" type="submit">Apply</button>
+      {% if status_filter or priority_filter or technician_filter %}
+        <a class="btn btn--ghost" href="{% url 'core:repair_list' %}">Reset</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Job board</h2>
+    {% if status_filter or priority_filter or technician_filter %}
+      <span class="card__hint">Filtered results</span>
+    {% else %}
+      <span class="card__hint">{{ repairs|length }} total</span>
+    {% endif %}
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Repair jobs with their appointment, technician, bay and progress</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">Job</th>
+          <th scope="col">Customer</th>
+          <th scope="col">Service</th>
+          <th scope="col">Vehicle</th>
+          <th scope="col">Priority</th>
+          <th scope="col">Technician</th>
+          <th scope="col">Bay</th>
+          <th scope="col">Inspection</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="th-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for repair in repairs %}
+          <tr>
+            <td class="mono num">{{ repair.RepairID }}</td>
+            <td class="cell-strong">
+              <a href="{% url 'core:appointment_detail' repair.AppointmentID.AppointmentID %}">{{ repair.customer_name }}</a>
+            </td>
+            <td>{{ repair.service.ServiceName }}</td>
+            <td>
+              {% if repair.vehicle %}
+                <a href="{% url 'core:vehicle_detail' repair.vehicle.VehicleID %}">{{ repair.vehicle.display_name }}</a>
+              {% else %}
+                <span class="badge badge--muted">Not linked</span>
+              {% endif %}
+            </td>
+            <td>{% include "core/_repair_badges.html" %}</td>
+            <td>
+              {% if repair.TechnicianID %}
+                {{ repair.TechnicianID.full_name }}
+              {% else %}
+                <span class="badge badge--muted" title="No qualified technician assigned yet">Unassigned</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if repair.BayID %}{{ repair.BayID.BayName }}{% else %}
+                <span class="badge badge--muted" title="No service bay assigned yet">None</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if repair.is_inspected %}
+                <span class="badge badge--active">Yes</span>
+              {% else %}
+                <span class="badge badge--muted">No</span>
+              {% endif %}
+            </td>
+            <td>{% include "core/_repair_status.html" %}</td>
+            <td class="actions">
+              <a class="btn btn--ghost btn--sm" href="{% url 'core:repair_detail' repair.RepairID %}">Open</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="10">
+              {% if status_filter or priority_filter or technician_filter %}
+                {% include "core/_empty.html" with title="No jobs match that filter" hint="Reset the filter to see every repair job." %}
+              {% else %}
+                {% include "core/_empty.html" with title="No repair jobs yet" hint="Check a vehicle in for its appointment, then raise a repair job for it." %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    A repair job can only be raised once its appointment is <strong>Checked In</strong> —
+    accepting a booking reserves the slot, it does not mean the vehicle has arrived.
+  </p>
+</section>
+{% endblock %}
+

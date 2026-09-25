@@ -1,0 +1,52 @@
+{% extends "core/base.html" %}
+{% block title %}Add service — ARMS{% endblock %}
+{% block content %}
+{# Service creation form (Administrator only) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:service_list' %}">Services</a></li>
+        <li><span class="crumbs__current" aria-current="page">Add</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Add service</h1>
+    <p class="page-head__sub">Add an entry to the workshop service catalogue</p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:service_list' %}">Back to list</a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Service details</h2>
+    <span class="card__hint">Fields marked <span class="field__req" aria-hidden="true">*</span> are required</span>
+  </header>
+
+  <form class="form" method="post" novalidate>
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid">
+      {% include "core/_field.html" with field=form.service_name wide=True %}
+      {% include "core/_field.html" with field=form.base_cost %}
+      {% include "core/_field.html" with field=form.est_duration %}
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Create service</button>
+      <a class="btn btn--ghost" href="{% url 'core:service_list' %}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

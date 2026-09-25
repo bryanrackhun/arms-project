@@ -1,0 +1,176 @@
+{% extends "core/base.html" %}
+{% block title %}Appointments — ARMS{% endblock %}
+{% block content %}
+{# Appointment diary: searchable, status-filtered (Receptionist, Administrator) #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Appointments</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Appointments</h1>
+    <p class="page-head__sub">
+      {{ appointments|length }} appointment{{ appointments|length|pluralize }}
+      {% if query or status_filter %} matching the current filter{% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--primary" href="{% url 'core:appointment_create' %}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+           stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+      <span>New appointment</span>
+    </a>
+  </div>
+</div>
+
+{% if pending_appointments %}
+  <section class="card card--review">
+    <header class="card__head">
+      <h2 class="card__title">Awaiting acceptance</h2>
+      <span class="card__hint">
+        {{ pending_appointments|length }} request{{ pending_appointments|length|pluralize }} to review
+      </span>
+    </header>
+    <p class="card__text">
+      Every booking — online or taken at the counter — waits here until it is
+      accepted. Accepting confirms the slot; cancelling releases it again.
+    </p>
+
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">Booking requests awaiting acceptance</caption>
+        <thead>
+          <tr>
+            <th scope="col" class="num">Ref</th>
+            <th scope="col">Customer</th>
+            <th scope="col">Service</th>
+            <th scope="col">Slot</th>
+            <th scope="col">Vehicle</th>
+            <th scope="col" class="th-actions">Decision</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for appointment in pending_appointments %}
+            <tr>
+              <td class="mono">#{{ appointment.pk }}</td>
+              <td class="cell-strong">{{ appointment.customer_name }}</td>
+              <td>{{ appointment.ServiceCode.ServiceName }}</td>
+              <td>{{ appointment.slot }}</td>
+              <td>
+                {% if appointment.VehicleID %}
+                  <a href="{% url 'core:vehicle_detail' appointment.VehicleID.VehicleID %}">{{ appointment.VehicleID.display_name }}</a>
+                {% else %}
+                  <span class="badge badge--muted">Not linked</span>
+                {% endif %}
+              </td>
+              <td class="actions">
+                <form class="inline-form" method="post"
+                      action="{% url 'core:appointment_accept' appointment.pk %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{% url 'core:appointment_list' %}">
+                  <button class="btn btn--primary btn--sm" type="submit">Accept</button>
+                </form>
+                <a class="btn btn--ghost btn--sm"
+                   href="{% url 'core:appointment_detail' appointment.pk %}">Review</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+
+<section class="card card--filters">
+  <h2 class="sr-only">Filter appointments</h2>
+  <form class="filter-bar" method="get" action="{% url 'core:appointment_list' %}">
+    <div class="filter-bar__field filter-bar__field--grow">
+      <label class="filter-bar__label" for="q">Search</label>
+      <input class="control" type="search" id="q" name="q" value="{{ query }}"
+             placeholder="Customer name or date (YYYY-MM-DD)" autocomplete="off">
+    </div>
+
+    <div class="filter-bar__field">
+      <label class="filter-bar__label" for="status">Status</label>
+      <select class="control" id="status" name="status">
+        <option value=""{% if not status_filter %} selected{% endif %}>All</option>
+        {% for value, label in status_choices %}
+          <option value="{{ value }}"{% if status_filter == value %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-bar__actions">
+      <button class="btn btn--primary" type="submit">Filter</button>
+      {% if query or status_filter %}
+        <a class="btn btn--ghost" href="{% url 'core:appointment_list' %}">Reset</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Diary</h2>
+    {% if query or status_filter %}
+      <span class="card__hint">Filtered results</span>
+    {% else %}
+      <span class="card__hint">Soonest first</span>
+    {% endif %}
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Appointments with customer, service, slot, vehicle and status</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">Ref</th>
+          <th scope="col">Customer</th>
+          <th scope="col">Service</th>
+          <th scope="col">Slot</th>
+          <th scope="col">Vehicle</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="th-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for appointment in appointments %}
+          <tr{% if appointment.is_cancelled %} class="row--muted"{% endif %}>
+            <td class="mono">#{{ appointment.pk }}</td>
+            <td class="cell-strong">{{ appointment.customer_name }}</td>
+            <td>{{ appointment.ServiceCode.ServiceName }}</td>
+            <td>{{ appointment.slot }}</td>
+            <td>
+              {% if appointment.VehicleID %}
+                <a href="{% url 'core:vehicle_detail' appointment.VehicleID.VehicleID %}">{{ appointment.VehicleID.display_name }}</a>
+              {% else %}
+                <span class="badge badge--muted">Not linked</span>
+              {% endif %}
+            </td>
+            <td><span class="badge badge--role">{{ appointment.get_Status_display }}</span></td>
+            <td class="actions">
+              {% if appointment.is_pending %}
+                <form class="inline-form" method="post"
+                      action="{% url 'core:appointment_accept' appointment.pk %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{% url 'core:appointment_list' %}">
+                  <button class="btn btn--primary btn--sm" type="submit">Accept</button>
+                </form>
+              {% endif %}
+              <a class="btn btn--ghost btn--sm" href="{% url 'core:appointment_detail' appointment.pk %}">Open</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7">
+              {% include "core/_empty.html" with title="No appointments found" hint="Book one with the 'New appointment' button, or customers can book online." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

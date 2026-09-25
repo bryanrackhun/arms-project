@@ -1,0 +1,95 @@
+{% extends "core/base.html" %}
+{% block title %}Book a repair — ARMS{% endblock %}
+{% block content %}
+{# Public online booking: no login, no vehicle data — vehicle is recorded at check-in #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:home' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Book a repair</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Book a repair appointment</h1>
+    <p class="page-head__sub">
+      Choose a service and a convenient slot. Your request is sent to our team
+      as <strong>pending</strong> and is confirmed once we accept it.
+      Half-hour appointments between 08:00 and 17:30.
+    </p>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Your details</h2>
+    <span class="card__hint">Fields marked <span class="field__req" aria-hidden="true">*</span> are required</span>
+  </header>
+
+  <form class="form" method="post" novalidate>
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid">
+      {% include "core/_field.html" with field=form.first_name %}
+      {% include "core/_field.html" with field=form.last_name %}
+      {% include "core/_field.html" with field=form.phone %}
+      {% include "core/_field.html" with field=form.email %}
+      {% include "core/_field.html" with field=form.service wide=True %}
+      {% include "core/_field.html" with field=form.appointment_date %}
+      {% include "core/_field.html" with field=form.appointment_time %}
+      {% include "core/_field.html" with field=form.notes wide=True %}
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Request appointment</button>
+    </div>
+  </form>
+</section>
+
+{% if services %}
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">What we offer</h2>
+      <span class="card__hint">{{ services|length }} service{{ services|length|pluralize }} available</span>
+    </header>
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">Services offered by the workshop</caption>
+        <thead>
+          <tr>
+            <th scope="col">Service</th>
+            <th scope="col" class="num">Base cost</th>
+            <th scope="col" class="num">Est. duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for service in services %}
+            <tr>
+              <td class="cell-strong">{{ service.ServiceName }}</td>
+              <td class="num">${{ service.BaseCost }}</td>
+              <td class="num">{{ service.Est_Duration }} min</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+
+<p class="note">
+  <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+  </svg>
+  You do not need vehicle details to book — we record your vehicle when you
+  arrive. Your request is held as pending until our team accepts it.
+</p>
+{% endblock %}

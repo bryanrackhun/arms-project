@@ -1,0 +1,10 @@
+{# Repair status badge. Usage: {% include "core/_repair_status.html" %} #}
+{# Completed reads as done, In Progress as the one to watch, Not Started as #}
+{# still waiting - so the board can be scanned by colour. #}
+{% if repair.is_completed %}
+  <span class="badge badge--active" title="Work finished; its service bay is released">{{ repair.Status }}</span>
+{% elif repair.Status == 'In Progress' %}
+  <span class="badge badge--pending">{{ repair.Status }}</span>
+{% else %}
+  <span class="badge badge--role">{{ repair.Status }}</span>
+{% endif %}

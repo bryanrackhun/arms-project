@@ -1,0 +1,27 @@
+{% extends "core/base.html" %}
+{% block title %}Access denied — ARMS{% endblock %}
+{% block content %}
+{# Error page: the attempt is blocked and the real reason stays server-side, #}
+{# so the page explains the rule without leaking the underlying detail. #}
+<div class="status-card">
+  <div class="status-card__code" aria-hidden="true">403</div>
+  <h1 class="status-card__title">Access denied</h1>
+  <p class="status-card__lead">
+    Your role does not permit access to that function. Staff, technician and
+    service management are restricted to the <strong>Administrator</strong> role.
+  </p>
+
+  {% if identity %}
+    <p class="status-card__who">
+      You are signed in as
+      <strong>{{ identity.staff_name }}</strong>
+      <span class="badge badge--role">{{ identity.role_name }}</span>.
+    </p>
+  {% endif %}
+
+  <div class="form-actions form-actions--center">
+    <a class="btn btn--primary" href="{% url 'core:dashboard' %}">Back to dashboard</a>
+    <a class="btn btn--ghost" href="{% url 'core:profile' %}">My profile</a>
+  </div>
+</div>
+{% endblock %}
