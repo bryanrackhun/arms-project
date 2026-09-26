@@ -50,16 +50,34 @@
                    href="{% url 'core:appointment_list' %}"{% if current|slice:":11" == 'appointment' %} aria-current="page"{% endif %}>Appointments</a></li>
             <li><a class="topnav__link{% if current|slice:":7" == 'vehicle' %} is-active{% endif %}"
                    href="{% url 'core:vehicle_list' %}"{% if current|slice:":7" == 'vehicle' %} aria-current="page"{% endif %}>Vehicles</a></li>
+            {# the catalogue is readable by the counter to answer "have you got one?" #}
+            <li><a class="topnav__link{% if current|slice:":4" == 'part' %} is-active{% endif %}"
+                   href="{% url 'core:part_list' %}"{% if current|slice:":4" == 'part' %} aria-current="page"{% endif %}>Parts</a></li>
           {% endif %}
           {% if identity.role_name == 'Administrator' or identity.role_name == 'Receptionist' %}
             {# repair job board: administrators manage, receptionists read (Timebox 3) #}
             <li><a class="topnav__link{% if current|slice:":6" == 'repair' %} is-active{% endif %}"
                    href="{% url 'core:repair_list' %}"{% if current|slice:":6" == 'repair' %} aria-current="page"{% endif %}>Repairs</a></li>
+            {# invoices: the counter raises the bill and takes payment (Timebox 4) #}
+            <li><a class="topnav__link{% if current|slice:":7" == 'invoice' %} is-active{% endif %}"
+                   href="{% url 'core:invoice_list' %}"{% if current|slice:":7" == 'invoice' %} aria-current="page"{% endif %}>Invoices</a></li>
+          {% endif %}
+          {% if identity.role_name == 'Administrator' %}
+            {# spare-part catalogue: a technician may draw stock against a job, #}
+            {# so the read-only list is offered to them too (below) #}
+            <li><a class="topnav__link{% if current|slice:":4" == 'part' %} is-active{% endif %}"
+                   href="{% url 'core:part_list' %}"{% if current|slice:":4" == 'part' %} aria-current="page"{% endif %}>Parts</a></li>
+            {# payroll reports what the workshop owes its own staff (Timebox 4) #}
+            <li><a class="topnav__link{% if current == 'payroll' %} is-active{% endif %}"
+                   href="{% url 'core:payroll' %}"{% if current == 'payroll' %} aria-current="page"{% endif %}>Payroll</a></li>
           {% endif %}
           {% if identity.role_name == 'Technician' %}
             {# a technician's whole view of this module: their own jobs (Timebox 3) #}
             <li><a class="topnav__link{% if current == 'my_repairs' or current|slice:":6" == 'repair' or current|slice:":10" == 'inspection' %} is-active{% endif %}"
                    href="{% url 'core:my_repairs' %}"{% if current == 'my_repairs' %} aria-current="page"{% endif %}>My repairs</a></li>
+            {# a technician checks what is on the shelf before starting a job #}
+            <li><a class="topnav__link{% if current|slice:":4" == 'part' %} is-active{% endif %}"
+                   href="{% url 'core:part_list' %}"{% if current|slice:":4" == 'part' %} aria-current="page"{% endif %}>Parts</a></li>
           {% endif %}
           {% if identity.role_name == 'Administrator' %}
             {# role-based authorisation: management links offered only to the #}

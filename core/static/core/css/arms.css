@@ -838,6 +838,12 @@ table.data td.actions .btn + .inline-form{margin-left:6px}
 .stat__meta{font-size:12.5px;color:var(--muted);margin-top:2px}
 .stat__link{font-weight:600}
 
+/* progress track (public status page): the stat tiles as an ordered list, so a
+   customer sees how far a vehicle has come rather than only where it stopped */
+.stats--track{list-style:none;margin:0;padding:0}
+.stats--track .stat{min-height:0}
+.stat__note{font-size:12.5px;color:var(--muted);margin:6px 0 0;line-height:1.45}
+
 /* management shortcuts */
 .tile-grid{
   display:grid;

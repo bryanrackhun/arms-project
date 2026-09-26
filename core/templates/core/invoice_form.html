@@ -1,0 +1,222 @@
+{% extends "core/base.html" %}
+{% block title %}Generate invoice — job #{{ repair.pk }} — ARMS{% endblock %}
+{% block content %}
+{# Invoice generation (FR11, T4-INV-20..25). The amounts are previewed from the #}
+{# same calculation the service layer will use to store them, so what the #}
+{# receptionist confirms here is what gets issued. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:invoice_list' %}">Invoices</a></li>
+        <li><span class="crumbs__current" aria-current="page">Generate for #{{ repair.pk }}</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Generate invoice</h1>
+    <p class="page-head__sub">
+      Repair job #{{ repair.pk }} — {{ repair.customer_name }} —
+      {{ repair.service.ServiceName }}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:repair_detail' repair.pk %}">Back to job</a>
+    <a class="btn btn--ghost" href="{% url 'core:invoice_list' %}">Invoices</a>
+  </div>
+</div>
+
+{% if needs_confirmation %}
+  <div class="alert alert--warning" role="status">
+    <span class="alert__icon" aria-hidden="true">&#9888;</span>
+    <div class="alert__body">
+      <p class="alert__text">
+        <strong>No parts were recorded against this job.</strong> That may be a
+        labour-only repair — or the technician may not have recorded the parts they
+        fitted. Check before generating: once the invoice exists, its parts cannot
+        be changed.
+      </p>
+      <p class="alert__text">
+        Tick <strong>{{ form.confirm_no_parts.label }}</strong> below to confirm this
+        is a labour-only invoice.
+      </p>
+    </div>
+  </div>
+{% endif %}
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Job being billed</h2>
+    <span class="badge badge--active">{{ repair.Status }}</span>
+  </header>
+
+  <dl class="dl-grid">
+    <div class="dl-grid__row">
+      <dt>Customer</dt>
+      <dd class="dl-grid__strong">{{ repair.customer_name }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Requested service</dt>
+      <dd>{{ repair.service.ServiceName }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Vehicle</dt>
+      <dd>
+        {% if repair.vehicle %}
+          {{ repair.vehicle.display_name }}
+        {% else %}
+          <span class="badge badge--muted">Not linked</span>
+        {% endif %}
+      </dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Completed</dt>
+      <dd>{{ repair.CompletedAt|default:"—" }}</dd>
+    </div>
+  </dl>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Parts recorded</h2>
+    <span class="card__hint">
+      {% if parts_usage %}
+        {{ parts_usage|length }} line{{ parts_usage|length|pluralize }} — ${{ preview.parts_cost }}
+      {% else %}
+        None — this will be a labour-only invoice
+      {% endif %}
+    </span>
+  </header>
+
+  {% if parts_usage %}
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">Parts that will make up the parts total of this invoice</caption>
+        <thead>
+          <tr>
+            <th scope="col">Part</th>
+            <th scope="col" class="num">Qty</th>
+            <th scope="col" class="num">Unit price</th>
+            <th scope="col" class="num">Line total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in parts_usage %}
+            <tr>
+              <td class="cell-strong">{{ item.PartID.PartName }}</td>
+              <td class="num">{{ item.Qty_Used }}</td>
+              <td class="num">${{ item.Unit_Price }}</td>
+              <td class="num cell-strong">${{ item.line_total }}</td>
+            </tr>
+          {% endfor %}
+          <tr>
+            <th scope="row" class="cell-strong">Parts total</th>
+            <td class="num"></td>
+            <td class="num"></td>
+            <td class="num cell-strong">${{ preview.parts_cost }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">
+      Each unit price is the one copied when the part was fitted, not today's
+      catalogue price. The parts total is fixed on the invoice the moment it is
+      generated.
+    </p>
+  {% else %}
+    <p class="card__text">
+      No parts were drawn against this job, so the parts total will be
+      <strong>$0.00</strong>.
+    </p>
+  {% endif %}
+</section>
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Tax and total</h2>
+    <span class="card__hint">Enter the tax rate; every other amount is calculated</span>
+  </header>
+
+  <form class="form" method="post" novalidate>
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid form-grid--inline">
+      {% include "core/_field.html" with field=form.tax_rate %}
+      {% if needs_confirmation %}
+        {% include "core/_field.html" with field=form.confirm_no_parts %}
+      {% endif %}
+    </div>
+
+    {# The preview recalculates on every render from the tax rate currently in the
+       form, so the figures the receptionist confirms are the ones that get stored.
+       They are shown read-only: nothing here is editable except the tax rate. #}
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">The amounts this invoice will carry</caption>
+        <thead>
+          <tr>
+            <th scope="col">Line</th>
+            <th scope="col">Basis</th>
+            <th scope="col" class="num">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row" class="cell-strong">Labour</th>
+            <td>{{ preview.service_name }} base cost</td>
+            <td class="num">${{ preview.labour_cost }}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="cell-strong">Parts</th>
+            <td>
+              {% if preview.usage_count %}
+                {{ preview.usage_count }} line{{ preview.usage_count|pluralize }} recorded
+              {% else %}
+                No parts recorded
+              {% endif %}
+            </td>
+            <td class="num">${{ preview.parts_cost }}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="cell-strong">Subtotal</th>
+            <td>Labour plus parts</td>
+            <td class="num">${{ preview.subtotal|default_if_none:"—" }}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="cell-strong">Tax</th>
+            <td>{{ preview.tax_rate }}% of the subtotal</td>
+            <td class="num">${{ preview.tax_amount }}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="cell-strong">Total due</th>
+            <td>Subtotal plus tax</td>
+            <td class="num cell-strong">${{ preview.total_amount }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Generate invoice</button>
+      <a class="btn btn--ghost" href="{% url 'core:repair_detail' repair.pk %}">Cancel</a>
+    </div>
+  </form>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Every amount is copied onto the invoice at generation. Changing the service's
+    base cost or a part's price afterwards will not alter this bill, and a repair
+    job can only be invoiced once.
+  </p>
+</section>
+{% endblock %}

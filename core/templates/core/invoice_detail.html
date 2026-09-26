@@ -1,0 +1,159 @@
+{% extends "core/base.html" %}
+{% block title %}Invoice #{{ invoice.InvoiceID }} — ARMS{% endblock %}
+{% block content %}
+{# One invoice with its itemised lines and the mark-paid action (FR11, #}
+{# T4-INV-26/27/28). Every amount shown is the stored copy, so a bill issued #}
+{# weeks ago still renders exactly as it was issued. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:invoice_list' %}">Invoices</a></li>
+        <li><span class="crumbs__current" aria-current="page">#{{ invoice.InvoiceID }}</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Invoice #{{ invoice.InvoiceID }}</h1>
+    <p class="page-head__sub">
+      {{ repair.customer_name }} — repair job #{{ repair.pk }}
+      {% if invoice.is_paid %}
+        <span class="badge badge--active">Paid</span>
+      {% else %}
+        <span class="badge badge--pending">{{ invoice.PaymentStatus }}</span>
+      {% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:repair_detail' repair.pk %}">View repair job</a>
+    <a class="btn btn--ghost" href="{% url 'core:invoice_list' %}">Back to invoices</a>
+  </div>
+</div>
+
+{% if invoice.is_paid %}
+  <div class="alert alert--info" role="status">
+    <span class="alert__icon" aria-hidden="true">&#10003;</span>
+    <div class="alert__body">
+      <p class="alert__text">
+        Settled on {{ invoice.PaidAt }}. A paid invoice is final — its amounts and
+        payment status can no longer be changed.
+      </p>
+    </div>
+  </div>
+{% else %}
+  <div class="pending-banner" role="status">
+    Payment outstanding: <strong>${{ invoice.TotalAmount }}</strong>
+  </div>
+{% endif %}
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Itemised bill</h2>
+    <span class="card__hint">Amounts fixed at generation on {{ invoice.GeneratedAt }}</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">The labour, parts, tax and total of this invoice</caption>
+      <thead>
+        <tr>
+          <th scope="col">Line</th>
+          <th scope="col">Detail</th>
+          <th scope="col" class="num">Qty</th>
+          <th scope="col" class="num">Unit</th>
+          <th scope="col" class="num">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row" class="cell-strong">Labour</th>
+          <td>{{ repair.service.ServiceName }}</td>
+          <td class="num">1</td>
+          <td class="num">${{ invoice.LabourCost }}</td>
+          <td class="num">${{ invoice.LabourCost }}</td>
+        </tr>
+        {% for item in parts_usage %}
+          <tr>
+            <th scope="row" class="cell-strong">{{ item.PartID.PartName }}</th>
+            <td>Part fitted</td>
+            <td class="num">{{ item.Qty_Used }}</td>
+            <td class="num">${{ item.Unit_Price }}</td>
+            <td class="num">${{ item.line_total }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <th scope="row" class="cell-strong">Parts</th>
+            <td colspan="3">No parts recorded — labour-only invoice</td>
+            <td class="num">$0.00</td>
+          </tr>
+        {% endfor %}
+        <tr>
+          <th scope="row" class="cell-strong">Parts subtotal</th>
+          <td colspan="3"></td>
+          <td class="num">${{ invoice.PartsCost }}</td>
+        </tr>
+        <tr>
+          <th scope="row" class="cell-strong">Subtotal</th>
+          <td colspan="3">Labour plus parts</td>
+          <td class="num">${{ invoice.subtotal }}</td>
+        </tr>
+        <tr>
+          <th scope="row" class="cell-strong">Tax</th>
+          <td colspan="3">{{ invoice.TaxRate }}% of the subtotal</td>
+          <td class="num">${{ invoice.TaxAmount }}</td>
+        </tr>
+        <tr>
+          <th scope="row" class="cell-strong">Total due</th>
+          <td colspan="3"></td>
+          <td class="num cell-strong">${{ invoice.TotalAmount }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Payment</h2>
+    {% if invoice.is_paid %}
+      <span class="badge badge--active">Settled</span>
+    {% else %}
+      <span class="badge badge--pending">Awaiting payment</span>
+    {% endif %}
+  </header>
+
+  <dl class="dl-grid">
+    <div class="dl-grid__row">
+      <dt>Payment status</dt>
+      <dd class="dl-grid__strong">{{ invoice.PaymentStatus }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Generated</dt>
+      <dd>{{ invoice.GeneratedAt }} by {{ invoice.GeneratedBy.full_name }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Paid at</dt>
+      <dd>{{ invoice.PaidAt|default:"—" }}</dd>
+    </div>
+    <div class="dl-grid__row">
+      <dt>Amount due</dt>
+      <dd class="dl-grid__strong">${{ invoice.TotalAmount }}</dd>
+    </div>
+  </dl>
+
+  {% if can_mark_paid %}
+    <form class="inline-form" method="post" action="{% url 'core:invoice_pay' invoice.InvoiceID %}"
+          data-confirm="Mark invoice #{{ invoice.InvoiceID }} as Paid? This cannot be undone.">
+      {% csrf_token %}
+      <button class="btn btn--primary" type="submit">Mark as Paid</button>
+    </form>
+    <p class="note">
+      Marking the invoice Paid records the moment the customer settled the bill and
+      closes it for editing. There is no way back to Pending.
+    </p>
+  {% else %}
+    <p class="note">
+      This invoice is Paid and final — its payment status and amounts can no longer
+      be changed.
+    </p>
+  {% endif %}
+</section>
+{% endblock %}

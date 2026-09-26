@@ -16,6 +16,17 @@ Route protection:
       the view, via ``services.can_manage_repair``). ``my-repairs/`` is the
       Technician's own board.
     * ``bays/*`` are Administrator-only (``bay_manager``).
+    * ``parts/`` is readable by Administrator, Receptionist and Technician
+      (``parts_viewer``); every other ``parts/*`` route - adding, editing,
+      restocking, deactivating, deleting, the low-stock review and a part's usage
+      history - is Administrator-only (``inventory_manager``). ``repairs/<id>/parts/``
+      follows the repair-job rule: the assigned technician or an Administrator,
+      checked per job in the view.
+    * ``invoices/*`` are Receptionist and Administrator (``invoice_staff``). A
+      Technician cannot view invoices at all.
+    * ``payroll/`` is Administrator-only (``payroll_manager``).
+    * ``repair-status/`` is public: the customer has no account, and the booking
+      reference is the only credential that page asks for.
     * Everything else is Administrator-only, enforced by the ``admin_only``
       decorator in :mod:`core.decorators`.
 """
@@ -195,4 +206,63 @@ urlpatterns = [
     path("bays/new/", views.bay_create_view, name="bay_create"),
     path("bays/<int:bay_id>/edit/", views.bay_edit_view, name="bay_edit"),
     path("bays/<int:bay_id>/delete/", views.bay_delete_view, name="bay_delete"),
+
+    # ------------------------------------------------------------------
+    # Timebox 4 - inventory, invoicing, payroll and the customer status view
+    # ------------------------------------------------------------------
+    # spare-part catalogue (list readable by Admin/Receptionist/Technician;
+    # every catalogue change is Administrator-only)
+    path("parts/", views.part_list_view, name="part_list"),
+    path("parts/new/", views.part_create_view, name="part_create"),
+    path("parts/low-stock/", views.part_low_stock_view, name="part_low_stock"),
+    path("parts/<int:part_id>/edit/", views.part_edit_view, name="part_edit"),
+    path(
+        "parts/<int:part_id>/restock/", views.part_restock_view, name="part_restock"
+    ),
+    path(
+        "parts/<int:part_id>/history/",
+        views.part_usage_history_view,
+        name="part_usage_history",
+    ),
+    path(
+        "parts/<int:part_id>/deactivate/",
+        views.part_deactivate_view,
+        name="part_deactivate",
+    ),
+    path(
+        "parts/<int:part_id>/reactivate/",
+        views.part_reactivate_view,
+        name="part_reactivate",
+    ),
+    path("parts/<int:part_id>/delete/", views.part_delete_view, name="part_delete"),
+
+    # parts drawn against a repair job (assigned Technician, Administrator)
+    path(
+        "repairs/<int:repair_id>/parts/",
+        views.repair_parts_record_view,
+        name="repair_parts_record",
+    ),
+    path(
+        "repairs/<int:repair_id>/parts/<int:usage_id>/remove/",
+        views.repair_parts_remove_view,
+        name="repair_parts_remove",
+    ),
+
+    # invoices (Receptionist, Administrator)
+    path("invoices/", views.invoice_list_view, name="invoice_list"),
+    path(
+        "repairs/<int:repair_id>/invoice/",
+        views.invoice_generate_view,
+        name="invoice_generate",
+    ),
+    path(
+        "invoices/<int:invoice_id>/", views.invoice_detail_view, name="invoice_detail"
+    ),
+    path("invoices/<int:invoice_id>/pay/", views.invoice_pay_view, name="invoice_pay"),
+
+    # technician payroll (Administrator)
+    path("payroll/", views.payroll_view, name="payroll"),
+
+    # public repair-progress lookup (no login: the customer has no account)
+    path("repair-status/", views.repair_status_lookup_view, name="repair_status_lookup"),
 ]

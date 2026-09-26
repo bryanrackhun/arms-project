@@ -30,6 +30,10 @@ from .decorators import (
     admin_only,
     bay_manager,
     booking_staff,
+    inventory_manager,
+    invoice_staff,
+    parts_viewer,
+    payroll_manager,
     repair_manager,
     repair_viewer,
     require_auth,
@@ -43,12 +47,19 @@ from .forms import (
     BookingForm,
     CancelAppointmentForm,
     InspectionForm,
+    InvoiceFilterForm,
+    InvoiceGenerateForm,
     LoginForm,
     MatchVehicleForm,
+    PartForm,
+    PartRestockForm,
+    PartsUsageForm,
+    PayrollForm,
     RepairAssignmentForm,
     RepairFilterForm,
     RepairForm,
     RepairStatusForm,
+    RepairStatusLookupForm,
     ServiceAssignmentForm,
     ServiceBayForm,
     ServiceForm,
@@ -68,12 +79,18 @@ from .models import (
     BAY_AVAILABLE,
     BAY_OCCUPIED,
     MAX_INSPECTION_IMAGES,
+    PAYMENT_PAID,
+    PAYMENT_PENDING,
+    PAYMENT_STATUSES,
     REPAIR_COMPLETED,
     REPAIR_IN_PROGRESS,
     REPAIR_NOT_STARTED,
     REPAIR_STATUSES,
     REPAIR_TRANSITIONS,
     Appointment,
+    Invoice,
+    Parts,
+    PartsUsage,
     Repair,
     Role,
     Service,
@@ -239,17 +256,30 @@ def dashboard_view(request):
         "repair_completed": Repair.objects.filter(Status=REPAIR_COMPLETED).count(),
         "bay_total": ServiceBay.objects.count(),
         "bay_available": ServiceBay.objects.filter(Status=BAY_AVAILABLE).count(),
+        # Timebox 4 counters: stock, billing and the money still owed.
+        "part_total": Parts.objects.filter(IsActive=True).count(),
+        # Surfaced for every role that can open the parts list, so a technician
+        # sees the shortage before starting a job that needs the part.
+        "part_low_stock": services.count_low_stock_parts(),
+        "invoice_pending": Invoice.objects.filter(
+            PaymentStatus=PAYMENT_PENDING
+        ).count(),
+        "invoice_paid": Invoice.objects.filter(PaymentStatus=PAYMENT_PAID).count(),
+        # Completed jobs waiting to be billed: the receptionist's work queue.
+        "repair_to_invoice": len(services.list_repairs_eligible_for_invoice()),
         "role_counts": (
             Staff.objects.values("RoleID__RoleName")
             .annotate(total=Count("StaffID"))
             .order_by("RoleID__RoleName")
         ),
-        # Modules from later phases, listed but not yet reachable.
+        # Everything with a requirement and a table has a screen now: Timebox 4
+        # added the parts catalogue, invoices and payroll. What is left is the
+        # work that has no screen at all - FR13 (multi-branch) is out of scope,
+        # and reporting has no requirement in Chapter 5, so it would need an
+        # FR15 before it could be built.
         "future_modules": [
-            ("Inventory", "Phase 4"),
-            ("Invoices", "Phase 4"),
-            ("Payroll", "Phase 4"),
-            ("Reports", "Phase 4"),
+            ("Multi-branch", "Out of scope"),
+            ("Reports", "Needs FR15"),
         ],
     }
     return render(request, "core/dashboard.html", context)
@@ -1635,6 +1665,16 @@ def repair_detail_view(request, repair_id: int):
 
     context["status_form"] = RepairStatusForm(repair=repair)
     context["inspection"] = repair.InspectionID
+    # Timebox 4: the parts panel. Whether stock may be drawn is decided once here
+    # and shared by the template and the POST view, so the "record parts" box can
+    # never be shown for a job the service layer would then refuse - and the list
+    # of lines the panel shows is the same list an invoice would be built from.
+    context["parts_usage"] = services.list_parts_usage(repair.pk)
+    context["parts_cost"] = services.parts_cost_for_repair(repair.pk)
+    context["invoice"] = services.invoice_for_repair(repair.pk)
+    context["can_record_parts"] = context["can_manage"] and _parts_open(repair, context)
+    if context["can_record_parts"]:
+        context["parts_form"] = PartsUsageForm(repair=repair)
     if context["is_admin"]:
         context["assignment_form"] = RepairAssignmentForm(repair=repair)
         # Which technicians are qualified for this job's service, so the detail
@@ -1643,6 +1683,22 @@ def repair_detail_view(request, repair_id: int):
             repair.AppointmentID.ServiceCode_id
         )
     return render(request, "core/repair_detail.html", context)
+
+
+def _parts_open(repair: Repair, context: dict) -> bool:
+    """True while stock may still be drawn against ``repair``.
+
+    Mirrors the gate the service layer enforces, so the panel is only offered when
+    recording would succeed: the job must be In Progress, it must not already be
+    invoiced, and there must be at least one active part to choose from. A technician
+    who is not assigned to the job is excluded by ``can_manage`` before this is even
+    consulted.
+    """
+    if repair.Status != REPAIR_IN_PROGRESS:
+        return False
+    if context.get("invoice") is not None:
+        return False
+    return Parts.objects.filter(IsActive=True).exists()
 
 
 @require_auth
@@ -2018,4 +2074,775 @@ def bay_delete_view(request, bay_id: int):
     else:
         messages.success(request, "Service bay deleted.")
     return redirect("core:bay_list")
+
+
+# ---------------------------------------------------------------------------
+# Spare-part inventory (FR10, Timebox 4)
+# ---------------------------------------------------------------------------
+def _parts_context(request) -> dict:
+    """Context shared by the parts screens.
+
+    Carries the low-stock count alongside whatever the page lists, so the badge in
+    the header and the figures in the table are read from the same source and
+    cannot disagree with each other.
+    """
+    identity = _identity(request)
+    role_name = identity["role_name"] if identity else ""
+    return {
+        "identity": identity,
+        "role_name": role_name,
+        "is_admin": role_name == Role.ADMINISTRATOR,
+        "low_stock_count": services.count_low_stock_parts(),
+    }
+
+
+@require_auth
+@parts_viewer
+def part_list_view(request):
+    """The parts catalogue with current stock and the low-stock flag (T4-INV-02).
+
+    Open to all three workshop roles because each needs a different thing from it:
+    the Administrator manages the catalogue, the Technician checks what is on the
+    shelf before starting a job, and the Receptionist answers a customer asking
+    whether a part is available. Only the Administrator sees the edit, deactivate
+    and delete actions - that split is made in the template from ``is_admin``, and
+    enforced again by the decorators on the actions themselves.
+    """
+    query = request.GET.get("q", "").strip()
+    show = request.GET.get("show", "active")
+
+    # Deactivated parts are hidden by default but never unreachable: the
+    # Administrator has to be able to find a retired part to reactivate it, and to
+    # see that its usage history is still intact.
+    include_inactive = show == "all"
+    parts = (
+        services.search_parts(query, include_inactive=include_inactive)
+        if query
+        else services.list_parts(include_inactive=include_inactive)
+    )
+
+    context = {
+        **_parts_context(request),
+        "parts": parts,
+        "query": query,
+        "show": show,
+        "part_form": PartForm(),
+        "active_total": Parts.objects.filter(IsActive=True).count(),
+        "inactive_total": Parts.objects.filter(IsActive=False).count(),
+    }
+    return render(request, "core/part_list.html", context)
+
+
+@require_auth
+@inventory_manager
+@require_POST
+def part_create_view(request):
+    """Add a part to the catalogue (T4-INV-01).
+
+    POST-only, like the bay creation it sits alongside: this writes catalogue data
+    rather than displaying a form of its own, and the add form lives inline on the
+    parts list so an administrator restocking several items does not navigate away
+    between them.
+    """
+    form = PartForm(request.POST)
+    if form.is_valid():
+        try:
+            part = services.create_part(
+                part_name=form.cleaned_data["part_name"],
+                unit_price=form.cleaned_data["unit_price"],
+                stock_qty=form.cleaned_data["stock_qty"],
+                reorder_threshold=form.cleaned_data["reorder_threshold"],
+            )
+        except ServiceError as error:
+            _service_error(request, error)
+        else:
+            message = f"'{part.PartName}' added to the catalogue."
+            if part.is_low_stock:
+                # Said at creation rather than discovered later on the low-stock
+                # page: entering stock at or below the threshold is a real
+                # condition, and the administrator should hear it now.
+                message += (
+                    f" It is already at or below its reorder threshold "
+                    f"({part.StockQty} of {part.ReorderThreshold}), so it is "
+                    "flagged low stock."
+                )
+            messages.success(request, message)
+    else:
+        messages.error(request, "Please correct the errors below.")
+    return redirect("core:part_list")
+
+
+def _part_back(request):
+    """Return to the low-stock page when the edit was started from there.
+
+    Restocking from the low-stock review should land back on that review, so the
+    administrator can work down the list of shortages rather than being dropped into
+    the full catalogue after each one. Anywhere else returns to the catalogue.
+    """
+    if request.POST.get("next") == reverse("core:part_low_stock"):
+        return redirect("core:part_low_stock")
+    return redirect("core:part_list")
+
+
+@require_auth
+@inventory_manager
+def part_edit_view(request, part_id: int):
+    """Amend a part's name, price, stock or threshold (T4-INV-03).
+
+    This is also the restock action: updating the stock quantity is what clears the
+    low-stock flag (T4-INV-10), so the edit form is reached from the low-stock page
+    as well as from the catalogue.
+
+    A separate page rather than an inline row, because four fields do not fit
+    comfortably in a table cell and the same form has to serve both entry points.
+    """
+    try:
+        part = services.get_part(part_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:part_list")
+
+    form = PartForm(request.POST or None, part=part)
+    if request.method == "POST":
+        if form.is_valid():
+            try:
+                part = services.update_part(
+                    part_id,
+                    part_name=form.cleaned_data["part_name"],
+                    unit_price=form.cleaned_data["unit_price"],
+                    stock_qty=form.cleaned_data["stock_qty"],
+                    reorder_threshold=form.cleaned_data["reorder_threshold"],
+                )
+            except ServiceError as error:
+                _service_error(request, error)
+            else:
+                message = f"'{part.PartName}' updated."
+                if part.is_low_stock:
+                    # Said explicitly, because restocking to a figure still at or
+                    # below the threshold leaves the flag up and the administrator
+                    # should not have to work out why.
+                    message += " It is still at or below its reorder threshold."
+                else:
+                    message += " Low-stock flag cleared."
+                messages.success(request, message)
+                return _part_back(request)
+        else:
+            messages.error(request, "Please correct the errors below.")
+
+    return render(
+        request,
+        "core/part_form.html",
+        {
+            **_parts_context(request),
+            "part": part,
+            "form": form,
+            # Drives the wording of the retirement note: a part with history can
+            # only be deactivated, and the page says so rather than leaving the
+            # administrator to discover it by trying to delete.
+            "has_usage": services.part_has_usage(part.pk),
+            "usage_count": PartsUsage.objects.filter(PartID=part).count(),
+        },
+    )
+
+
+@require_auth
+@inventory_manager
+@require_POST
+def part_deactivate_view(request, part_id: int):
+    """Retire a part without deleting its history (T4-INV-04).
+
+    This is the retirement path for anything already used: deactivating keeps the
+    row - and every invoice quoting it - intact, while stopping the part being
+    offered for new repairs. A part with no usage history can be deleted outright
+    instead, and the catalogue offers that button in its place.
+    """
+    try:
+        part = services.deactivate_part(part_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        messages.success(
+            request,
+            f"'{part.PartName}' deactivated. It can no longer be used on new "
+            "repairs, but its usage history and any invoices quoting it are kept.",
+        )
+    return redirect("core:part_list")
+
+
+@require_auth
+@inventory_manager
+@require_POST
+def part_reactivate_view(request, part_id: int):
+    """Bring a retired part back into the catalogue.
+
+    Offered because deactivation is retirement rather than deletion: a part the
+    workshop stopped stocking may be sourced again, and reactivating it keeps its
+    usage history where a replacement row would start from nothing.
+    """
+    try:
+        part = services.reactivate_part(part_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        messages.success(request, f"'{part.PartName}' is active again.")
+    return redirect("core:part_list")
+
+
+@require_auth
+@inventory_manager
+@require_POST
+def part_delete_view(request, part_id: int):
+    """Delete a part that has never been used (T4-INV-04).
+
+    Refused by the service layer the moment the part has usage history, with a
+    message naming deactivation as the alternative. The button is also hidden for
+    such parts, so this refusal is the backstop against a hand-crafted POST rather
+    than something an administrator normally meets.
+    """
+    try:
+        services.delete_part(part_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        messages.success(request, "Part deleted.")
+    return redirect("core:part_list")
+
+
+@require_auth
+@inventory_manager
+def part_low_stock_view(request):
+    """Review the active parts at or below their reorder threshold (T4-INV-10).
+
+    Administrator-only, because restocking is a catalogue change. Each shortage is
+    listed with its own restock form, so working down the list does not mean
+    navigating to the edit page and back for every part.
+
+    The shortfall is computed here and attached to each part rather than worked out
+    in the template, because it is arithmetic that belongs in one place - the same
+    approach ``bay_list_view`` takes for the job holding a bay. The restock form
+    itself is validated by ``PartRestockForm`` on POST; the row only needs the
+    part's current figure to pre-fill with.
+    """
+    parts = services.list_low_stock_parts()
+    for part in parts:
+        # How far below the threshold the shelf has fallen. Zero when the stock
+        # sits exactly on the threshold, which still counts as low stock.
+        part.short_by = max(part.ReorderThreshold - part.StockQty, 0)
+
+    return render(
+        request,
+        "core/part_low_stock.html",
+        {
+            **_parts_context(request),
+            "parts": parts,
+            "out_of_stock_count": sum(1 for part in parts if part.StockQty == 0),
+        },
+    )
+
+
+@require_auth
+@inventory_manager
+@require_POST
+def part_restock_view(request, part_id: int):
+    """Restock a part from the low-stock review page (T4-INV-10).
+
+    The quantity is *set* rather than incremented: the administrator counts the
+    shelf and enters what is there. Because the low-stock flag is derived from stock
+    versus threshold, a restock above the threshold clears it with no separate step.
+    """
+    try:
+        part = services.get_part(part_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:part_low_stock")
+
+    form = PartRestockForm(request.POST, part=part)
+    if form.is_valid():
+        try:
+            part = services.update_part(
+                part_id, stock_qty=form.cleaned_data["stock_qty"]
+            )
+        except ServiceError as error:
+            _service_error(request, error)
+        else:
+            if part.is_low_stock:
+                # A warning rather than a success: the figure was saved, but the
+                # shortage this page exists to clear is still there.
+                messages.warning(
+                    request,
+                    f"'{part.PartName}' restocked to {part.StockQty}, which is still "
+                    f"at or below its threshold of {part.ReorderThreshold}.",
+                )
+            else:
+                messages.success(
+                    request,
+                    f"'{part.PartName}' restocked to {part.StockQty}. "
+                    "Low-stock flag cleared.",
+                )
+    else:
+        messages.error(request, "Enter a valid stock quantity to restock with.")
+    return redirect("core:part_low_stock")
+
+
+@require_auth
+@inventory_manager
+def part_usage_history_view(request, part_id: int):
+    """A part's usage history: repair, quantity, date and who recorded it (T4-INV-11).
+
+    The audit trail behind the stock figure. Each line links to the job it was drawn
+    against, so an administrator reconciling a shortage can see exactly which repairs
+    consumed the part and when.
+    """
+    try:
+        part = services.get_part(part_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:part_list")
+
+    # Materialised once, so the total and the rows come from the same query rather
+    # than a separate aggregate that could disagree with what is on screen.
+    rows = list(
+        PartsUsage.objects.filter(PartID=part)
+        .select_related(
+            "RepairID",
+            "RepairID__AppointmentID",
+            "RepairID__AppointmentID__ServiceCode",
+            "RecordedBy",
+        )
+        .order_by("-UsedAt", "-UsageID")
+    )
+
+    return render(
+        request,
+        "core/part_usage_history.html",
+        {
+            **_parts_context(request),
+            "part": part,
+            "usage": rows,
+            "total_used": sum(item.Qty_Used for item in rows),
+        },
+    )
+
+
+@require_auth
+@repair_viewer
+@require_POST
+def repair_parts_record_view(request, repair_id: int):
+    """Record a part used on a repair job and draw it from stock (T4-INV-05).
+
+    Open to the assigned technician or an Administrator. The per-job ownership check
+    that gates the status and inspection actions gates this one too, so a technician
+    posting against someone else's job is refused here rather than only hidden in the
+    template (TC4-06).
+
+    Stock is reduced inside the same transaction as the usage row - that is done in
+    the service layer - so the message shown afterwards can quote the resulting
+    figure and, if the draw took the part to or below its reorder threshold, say so.
+    Flagging it at the point of use is what makes the low-stock page get filled in
+    the first place.
+    """
+    try:
+        repair = services.get_repair(repair_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:repair_list")
+
+    staff = _current_staff(request)
+    if not services.can_manage_repair(repair, staff):
+        return _repair_denied(
+            request,
+            "Access denied: you can only record parts against repair jobs "
+            "assigned to you.",
+        )
+
+    form = PartsUsageForm(request.POST, repair=repair)
+    if form.is_valid():
+        part = form.cleaned_data["part"]
+        quantity = form.cleaned_data["qty_used"]
+        try:
+            usage, updated = services.record_parts_usage(
+                repair_id, part.pk, quantity, staff
+            )
+        except ServiceError as error:
+            _service_error(request, error)
+        else:
+            message = (
+                f"{usage.Qty_Used} x {updated.PartName} recorded against job "
+                f"#{repair.pk}. {updated.StockQty} left in stock."
+            )
+            if updated.is_low_stock:
+                message += (
+                    f" That is at or below its reorder threshold of "
+                    f"{updated.ReorderThreshold}, so the part is now flagged "
+                    "low stock."
+                )
+            messages.success(request, message)
+    else:
+        # The field-level reason (over-draw, non-numeric quantity) is more useful
+        # than a generic line, so the first error is surfaced verbatim.
+        first_error = next(iter(form.errors.values()), ["Please check the form."])
+        messages.error(request, first_error[0])
+
+    return _repair_back(request, repair)
+
+
+@require_auth
+@inventory_manager
+@require_POST
+def repair_parts_remove_view(request, repair_id: int, usage_id: int):
+    """Remove a usage entry recorded in error, restoring the stock (T4-INV-08).
+
+    Administrator-only, and refused once the job has been invoiced: the lines a bill
+    was built from become the record at that point, and putting stock back behind
+    them would leave an invoice charging for parts the system now says were never
+    fitted.
+
+    The repair id is part of the URL even though the usage row alone identifies the
+    line, so the route reads as an action *on a job* and the redirect back to that
+    job does not depend on anything in the request body.
+    """
+    try:
+        repair = services.get_repair(repair_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:repair_list")
+
+    staff = _current_staff(request)
+    try:
+        services.remove_parts_usage(usage_id, staff)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        messages.success(
+            request,
+            f"Parts usage entry removed from job #{repair.pk} and the stock "
+            "returned to the catalogue.",
+        )
+    return redirect("core:repair_detail", repair_id=repair_id)
+
+
+# ---------------------------------------------------------------------------
+# Invoicing (FR11, Receptionist and Administrator)
+# ---------------------------------------------------------------------------
+@require_auth
+@invoice_staff
+def invoice_list_view(request):
+    """List invoices, filterable by payment status, plus the jobs awaiting one (T4-INV-28).
+
+    Two lists on one page, because they are the two halves of the receptionist's
+    billing task: what has been raised, and what is still waiting to be raised. The
+    second list is the entry point for generation, so the dropdown of billable jobs
+    lives here rather than on a page of its own.
+
+    The filter is validated through ``InvoiceFilterForm`` so a hand-edited query
+    string cannot silently produce an empty list that reads as "no invoices".
+    """
+    filter_form = InvoiceFilterForm(request.GET or None)
+    payment_status = ""
+    if filter_form.is_valid():
+        payment_status = filter_form.cleaned_data.get("payment_status") or ""
+
+    try:
+        invoices = services.list_invoices(payment_status=payment_status)
+    except ValidationError as error:
+        messages.warning(request, str(error))
+        invoices = services.list_invoices()
+
+    return render(
+        request,
+        "core/invoice_list.html",
+        {
+            "identity": _identity(request),
+            "invoices": invoices,
+            "filter_form": filter_form,
+            "payment_status": payment_status,
+            # The completed-but-unbilled jobs, as direct links into each job's
+            # generation page. Listed rather than offered through a form so the
+            # picker works without JavaScript and lands on the preview before
+            # anything is created.
+            "eligible_repairs": services.list_repairs_eligible_for_invoice(),
+            "pending_count": Invoice.objects.filter(
+                PaymentStatus=PAYMENT_PENDING
+            ).count(),
+            "paid_count": Invoice.objects.filter(PaymentStatus=PAYMENT_PAID).count(),
+            "total_outstanding": services.total_outstanding_invoices(),
+        },
+    )
+
+
+@require_auth
+@invoice_staff
+def invoice_generate_view(request, repair_id: int):
+    """Enter the tax rate and raise the bill for a completed job (T4-INV-20..25).
+
+    The amounts are previewed from the same calculation the write path uses, so what
+    the receptionist confirms is what gets stored. The zero-parts case shows a
+    warning and requires the confirmation checkbox (T4-INV-25); a job with parts
+    recorded does not show that checkbox at all.
+
+    GET renders the preview, POST generates. A job that is not Completed, or is
+    already invoiced, is redirected away with an explanation rather than shown a form
+    that could only fail.
+    """
+    try:
+        repair = services.get_repair(repair_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:invoice_list")
+
+    existing = services.invoice_for_repair(repair_id)
+    if existing is not None:
+        # Sent to the bill that already exists rather than refused cold: the
+        # receptionist almost certainly meant to open it, not raise a second.
+        messages.info(
+            request,
+            f"Repair job #{repair.pk} has already been invoiced. Opening the "
+            "existing invoice instead.",
+        )
+        return redirect("core:invoice_detail", invoice_id=existing.pk)
+
+    if not repair.is_completed:
+        messages.error(
+            request,
+            f"Repair job #{repair.pk} is {repair.Status.lower()}; an invoice can "
+            "only be generated once the job is Completed.",
+        )
+        return redirect("core:repair_detail", repair_id=repair_id)
+
+    staff = _current_staff(request)
+    form = InvoiceGenerateForm(repair=repair)
+    if request.method == "POST":
+        form = InvoiceGenerateForm(request.POST, repair=repair)
+        if form.is_valid():
+            try:
+                invoice = services.generate_invoice(
+                    repair_id,
+                    form.cleaned_data["tax_rate"],
+                    staff,
+                    confirm_no_parts=bool(form.cleaned_data.get("confirm_no_parts")),
+                )
+            except ServiceError as error:
+                _service_error(request, error)
+            else:
+                messages.success(
+                    request,
+                    f"Invoice #{invoice.pk} generated for {repair.customer_name}: "
+                    f"${invoice.TotalAmount} ({invoice.PaymentStatus.lower()}).",
+                )
+                return redirect("core:invoice_detail", invoice_id=invoice.pk)
+        else:
+            messages.error(request, "Please correct the errors below.")
+
+    try:
+        preview = services.invoice_preview(
+            repair_id, form["tax_rate"].value() or 0
+        )
+    except ValidationError:
+        # An unusable rate in a re-rendered form: show the parts at zero tax so the
+        # page still renders, and let the inline field error carry the explanation.
+        preview = services.invoice_preview(repair_id, 0)
+
+    return render(
+        request,
+        "core/invoice_form.html",
+        {
+            "identity": _identity(request),
+            "repair": repair,
+            "form": form,
+            "preview": preview,
+            "parts_usage": services.list_parts_usage(repair_id),
+            # Drives the warning block: the form only offers the checkbox when this
+            # is true, so the page and the validation agree on when it is needed.
+            "needs_confirmation": form.needs_confirmation,
+        },
+    )
+
+
+@require_auth
+@invoice_staff
+def invoice_detail_view(request, invoice_id: int):
+    """One invoice with its itemised parts lines and the mark-paid action (T4-INV-28).
+
+    Shows what the bill was built from: the labour line, each parts line at the price
+    captured when it was used, and the tax. Those amounts are the stored copies, so
+    the page renders an invoice issued weeks ago exactly as it was issued, even if
+    the catalogues have moved since.
+
+    The mark-paid button is offered only while the invoice is Pending. A Paid invoice
+    is final (T4-INV-27), so the page says so rather than showing a control that
+    would be refused.
+    """
+    try:
+        invoice = services.get_invoice(invoice_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:invoice_list")
+
+    repair = invoice.RepairID
+    return render(
+        request,
+        "core/invoice_detail.html",
+        {
+            "identity": _identity(request),
+            "invoice": invoice,
+            "repair": repair,
+            # The lines the PartsCost figure was summed from, at their captured
+            # prices - read rather than recalculated, so what is shown is what was
+            # billed.
+            "parts_usage": services.list_parts_usage(repair.pk),
+            "can_mark_paid": not invoice.is_paid,
+        },
+    )
+
+
+@require_auth
+@invoice_staff
+@require_POST
+def invoice_pay_view(request, invoice_id: int):
+    """Mark an invoice Paid when the customer settles the bill (T4-INV-26).
+
+    POST-only: taking payment changes a financial record, so it must never happen
+    through a link a prefetch or a crawler could follow. The refusal of an
+    already-Paid invoice is enforced in the service layer, which is what makes a
+    Paid invoice final (T4-INV-27) - there is no path back to Pending.
+    """
+    try:
+        invoice = services.mark_invoice_paid(invoice_id, _current_staff(request))
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:invoice_list")
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        messages.success(
+            request,
+            f"Invoice #{invoice.pk} marked Paid for "
+            f"{invoice.RepairID.customer_name}.",
+        )
+    return redirect("core:invoice_detail", invoice_id=invoice_id)
+
+
+# ---------------------------------------------------------------------------
+# Technician payroll (FR12, Administrator)
+# ---------------------------------------------------------------------------
+@require_auth
+@payroll_manager
+def payroll_view(request):
+    """Calculate and show technician pay for a chosen period (T4-PAY-01..06).
+
+    A GET with query parameters runs the calculation, so the report is linkable and
+    re-runnable without a stored run - payroll here is a review of what the data
+    already implies, not a payslip to be saved. Opening the page with no parameters
+    still runs it, for the current month, because an administrator coming here at
+    month end wants figures rather than an empty form.
+
+    Three outcomes are all reported on the page rather than being treated as
+    failures:
+
+    * a technician with no completed jobs appears at zero, with the information
+      message from the service layer (T4-PAY-05);
+    * a technician-role account with no hourly rate is listed separately as
+      excluded, naming them (T4-PAY-06);
+    * an empty period totals zero and says so.
+
+    An invalid range is a form error, not a zero total, because "nobody did any
+    work" and "the dates were typed backwards" need different responses.
+    """
+    form = PayrollForm(request.GET or None)
+    report = None
+    default_start, default_end = services.default_payroll_range()
+
+    if form.is_valid():
+        chosen = form.cleaned_data.get("technician")
+        try:
+            report = services.calculate_payroll(
+                form.cleaned_data["start_date"],
+                form.cleaned_data["end_date"],
+                technician_id=chosen.pk if chosen is not None else None,
+            )
+        except ServiceError as error:
+            _service_error(request, error)
+        else:
+            # The exclusions are surfaced as messages as well as on the page, so an
+            # administrator who prints or exports the report has still been told
+            # that somebody was left out and why.
+            for excluded in report["excluded"]:
+                messages.warning(request, excluded["reason"])
+            if report["job_count"] == 0:
+                messages.info(
+                    request,
+                    "No repair jobs were completed in this period, so every total "
+                    "is zero.",
+                )
+
+    return render(
+        request,
+        "core/payroll.html",
+        {
+            "identity": _identity(request),
+            "form": form,
+            "report": report,
+            "technicians": Technician.objects.select_related("StaffID"),
+            "default_start": default_start,
+            "default_end": default_end,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Customer repair status view (FR14, public)
+# ---------------------------------------------------------------------------
+def repair_status_lookup_view(request):
+    """Public repair-progress lookup by booking reference (T4-STS-01..10).
+
+    Named distinctly from Timebox 3's ``repair_status_view``, which is the
+    staff-facing action that *changes* a job's status: this one only reads, is
+    public, and shares no code with it. Keeping the names apart stops the two being
+    confused in the URLconf.
+
+    Deliberately has no ``@require_auth``: the customer has no account, and the
+    reference code they were given at booking is the only credential this page asks
+    for. That is also why the page never exposes staff names, internal notes or
+    itemised costs - anyone holding a reference can read it, so it is built from the
+    customer-facing subset only.
+
+    Both GET (no lookup yet) and POST (lookup) render the same template. An unknown
+    or invalid reference produces an error message and no status (T4-STS-10), using
+    the same wording either way so the page cannot be used to discover which codes
+    exist.
+    """
+    form = RepairStatusLookupForm()
+    status = None
+
+    # After booking, the customer is sent here with their reference pre-filled
+    # rather than being made to retype it.
+    preset = request.GET.get("ref", "").strip()
+    if preset and request.method == "GET":
+        form = RepairStatusLookupForm(initial={"reference_code": preset})
+        status = services.get_customer_repair_status(preset)
+
+    if request.method == "POST":
+        form = RepairStatusLookupForm(request.POST)
+        if form.is_valid():
+            status = services.get_customer_repair_status(
+                form.cleaned_data["reference_code"]
+            )
+        # An invalid form falls through with status None: the inline field error
+        # (empty reference) is the explanation, and no status block is rendered.
+
+    return render(
+        request,
+        "core/repair_status_public.html",
+        {"form": form, "status": status},
+    )
+
+
 

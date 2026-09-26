@@ -1,0 +1,117 @@
+{% extends "core/base.html" %}
+{% block title %}Edit {{ part.PartName }} — ARMS{% endblock %}
+{% block content %}
+{# Part editing (FR10, Administrator only). This is also the restock route #}
+{# reached from the low-stock review, so the "next" hidden field carries the #}
+{# caller back there rather than dropping them into the full catalogue. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:part_list' %}">Parts</a></li>
+        <li><span class="crumbs__current" aria-current="page">{{ part.PartName }}</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Edit {{ part.PartName }}</h1>
+    <p class="page-head__sub">
+      Part #{{ part.PartID }}
+      {% if not part.IsActive %}
+        <span class="badge badge--inactive">Deactivated</span>
+      {% elif part.is_low_stock %}
+        <span class="badge badge--pending">Low stock</span>
+      {% else %}
+        <span class="badge badge--active">In stock</span>
+      {% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:part_usage_history' part.PartID %}">Usage history</a>
+    <a class="btn btn--ghost" href="{% url 'core:part_list' %}">Back to catalogue</a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Catalogue details</h2>
+    <span class="card__hint">Fields marked <span class="field__req" aria-hidden="true">*</span> are required</span>
+  </header>
+
+  <form class="form" method="post" novalidate>
+    {% csrf_token %}
+    {# Carries the caller back to the low-stock review when the edit started there. #}
+    <input type="hidden" name="next" value="{{ request.GET.next }}">
+
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid">
+      {% include "core/_field.html" with field=form.part_name wide=True %}
+      {% include "core/_field.html" with field=form.unit_price %}
+      {% include "core/_field.html" with field=form.stock_qty %}
+      {% include "core/_field.html" with field=form.reorder_threshold %}
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Save changes</button>
+      <a class="btn btn--ghost" href="{% url 'core:part_list' %}">Cancel</a>
+    </div>
+  </form>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Changing the unit price here does not re-price any repair already recorded:
+    each parts-usage row keeps the price as it was when the part was fitted. Raising
+    the stock quantity above {{ part.ReorderThreshold }} clears the low-stock flag.
+  </p>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Retiring this part</h2>
+    <span class="card__hint">
+      {% if has_usage %}{{ usage_count }} usage record{{ usage_count|pluralize }} — deactivation only{% else %}No usage yet — deletion is available{% endif %}
+    </span>
+  </header>
+
+  {% if has_usage %}
+    <p class="note">
+      This part has been used on {{ usage_count }} repair
+      record{{ usage_count|pluralize }}, so it cannot be deleted — doing so would
+      erase the price those invoices were built from. Deactivate it instead: the row
+      and its history are kept, and it stops being offered for new repairs.
+    </p>
+    {% if part.IsActive %}
+      <form class="inline-form" method="post" action="{% url 'core:part_deactivate' part.PartID %}"
+            data-confirm="Deactivate {{ part.PartName }}?">
+        {% csrf_token %}
+        <button class="btn btn--ghost" type="submit">Deactivate part</button>
+      </form>
+    {% else %}
+      <form class="inline-form" method="post" action="{% url 'core:part_reactivate' part.PartID %}">
+        {% csrf_token %}
+        <button class="btn btn--primary" type="submit">Reactivate part</button>
+      </form>
+    {% endif %}
+  {% else %}
+    <p class="note">
+      This part has never been drawn against a repair, so it can be deleted outright.
+      Once it has usage history, only deactivation will be offered.
+    </p>
+    <form class="inline-form" method="post" action="{% url 'core:part_delete' part.PartID %}"
+          data-confirm="Delete {{ part.PartName }} permanently?">
+      {% csrf_token %}
+      <button class="btn btn--danger" type="submit">Delete part</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

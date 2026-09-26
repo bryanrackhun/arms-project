@@ -296,5 +296,14 @@
     {% endif %}
   {% endif %}
 </section>
+
+{# Timebox 4: the parts drawn against this job, then the invoice raised from #}
+{# them. A Technician sees the parts they recorded but never the invoice: the #}
+{# workflow rules bar them from viewing invoices, and a bill shows what the #}
+{# workshop charges rather than what the work involved. #}
+{% include "core/_repair_parts.html" %}
+{% if role_name != 'Technician' %}
+  {% include "core/_repair_invoice.html" %}
+{% endif %}
 {% endblock %}
 

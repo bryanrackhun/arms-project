@@ -147,3 +147,39 @@ repair_viewer = require_role(
 #: Service bays are workshop infrastructure, so only the Administrator manages
 #: the records themselves (FR9).
 bay_manager = require_role(Role.ADMINISTRATOR)
+
+
+# ---------------------------------------------------------------------------
+# Timebox 4 - inventory, invoicing, payroll and the customer status view
+# ---------------------------------------------------------------------------
+#: Who may read the parts catalogue and its stock levels (T4-INV-02). All three
+#: workshop roles need it, but for different reasons: the Administrator manages the
+#: catalogue, the Technician checks what is on the shelf before starting a job, and
+#: the Receptionist answers a customer asking whether a part is available. Reading
+#: is therefore the widest allowance in this timebox - writing is much narrower.
+PARTS_VIEWER_ROLES = frozenset(
+    {Role.ADMINISTRATOR, Role.RECEPTIONIST, Role.TECHNICIAN}
+)
+
+#: Convenience decorator for the parts list.
+parts_viewer = require_role(Role.ADMINISTRATOR, Role.RECEPTIONIST, Role.TECHNICIAN)
+
+#: The catalogue itself - adding, editing, deactivating parts, the low-stock
+#: review page and usage history - is Administrator-only (T4-INV-01/03/04/10/11).
+#: A technician may draw stock against a job but may not change what the stock is.
+inventory_manager = require_role(Role.ADMINISTRATOR)
+
+#: Raising a bill and taking payment belongs to the counter: the Receptionist, with
+#: the Administrator retaining access to supervise and correct (T4-INV-20/26/28).
+#: A Technician is deliberately excluded - the workflow rules state plainly that a
+#: technician cannot view invoices, since a bill shows what the workshop charges
+#: rather than what the work involved.
+INVOICE_ROLES = frozenset({Role.RECEPTIONIST, Role.ADMINISTRATOR})
+
+#: Convenience decorator for the invoice screens.
+invoice_staff = require_role(Role.RECEPTIONIST, Role.ADMINISTRATOR)
+
+#: Payroll is an Administrator function (T4-PAY-01): it reports what the workshop
+#: owes its own staff, which is neither a counter task nor something a technician
+#: should see for their colleagues.
+payroll_manager = require_role(Role.ADMINISTRATOR)

@@ -1,0 +1,179 @@
+{% extends "core/base.html" %}
+{% block title %}Parts — ARMS{% endblock %}
+{% block content %}
+{# Spare-part inventory (FR10). Readable by all three workshop roles; the #}
+{# catalogue actions are rendered only for the Administrator and are re-checked #}
+{# by the decorators on the views they post to. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Parts</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Spare parts</h1>
+    <p class="page-head__sub">
+      {{ parts|length }} part{{ parts|length|pluralize }} shown —
+      {{ active_total }} active{% if inactive_total %}, {{ inactive_total }} deactivated{% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    {% if is_admin %}
+      <a class="btn btn--ghost" href="{% url 'core:part_low_stock' %}">
+        Low stock
+        {% if low_stock_count %}<span class="badge badge--count">{{ low_stock_count }}</span>{% endif %}
+      </a>
+    {% endif %}
+    <a class="btn btn--ghost" href="{% url 'core:repair_list' %}">Repair jobs</a>
+  </div>
+</div>
+
+{% if low_stock_count %}
+  <div class="pending-banner" role="status">
+    <strong>{{ low_stock_count }}</strong>
+    part{{ low_stock_count|pluralize }} at or below the reorder threshold.
+    {% if is_admin %}
+      <a href="{% url 'core:part_low_stock' %}">Review and restock</a>
+    {% endif %}
+  </div>
+{% endif %}
+
+<section class="card card--filters">
+  <form class="filter-bar" method="get" action="{% url 'core:part_list' %}">
+    <div class="field">
+      <label class="field__label" for="id_q">Search by name</label>
+      <input class="form-control" type="search" id="id_q" name="q" value="{{ query }}"
+             placeholder="e.g. brake" autocomplete="off">
+    </div>
+    {% if is_admin %}
+      {# Only the Administrator can reach deactivated parts at all, so the toggle #}
+      {# is not offered to the other two roles - it would change nothing. #}
+      <div class="field">
+        <label class="field__label" for="id_show">Show</label>
+        <select class="form-control" id="id_show" name="show">
+          <option value="active" {% if show != 'all' %}selected{% endif %}>Active parts</option>
+          <option value="all" {% if show == 'all' %}selected{% endif %}>All, including deactivated</option>
+        </select>
+      </div>
+    {% endif %}
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Search</button>
+      {% if query or show == 'all' %}
+        <a class="btn btn--ghost" href="{% url 'core:part_list' %}">Clear</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Catalogue</h2>
+    <span class="card__hint">Stock is reduced automatically as parts are used on repairs</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Spare parts with their unit price, stock level and reorder threshold</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">ID</th>
+          <th scope="col">Part</th>
+          <th scope="col" class="num">Unit price</th>
+          <th scope="col" class="num">Stock</th>
+          <th scope="col" class="num">Reorder at</th>
+          <th scope="col">Status</th>
+          {% if is_admin %}<th scope="col" class="th-actions">Actions</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for part in parts %}
+          <tr>
+            <td class="mono num">{{ part.PartID }}</td>
+            <td class="cell-strong">{{ part.PartName }}</td>
+            <td class="num">${{ part.UnitPrice }}</td>
+            <td class="num cell-strong">{{ part.StockQty }}</td>
+            <td class="num">{{ part.ReorderThreshold }}</td>
+            <td>
+              {# A deactivated part can also be short, but "Deactivated" is the #}
+              {# badge shown: a retired part cannot be reordered, so flagging it #}
+              {# low stock would ask for an action that is no longer available. #}
+              {% if not part.IsActive %}
+                <span class="badge badge--inactive">Deactivated</span>
+              {% elif part.is_low_stock %}
+                <span class="badge badge--pending"
+                      title="Stock has reached the reorder threshold">Low stock</span>
+              {% else %}
+                <span class="badge badge--active">In stock</span>
+              {% endif %}
+            </td>
+            {% if is_admin %}
+              <td class="actions">
+                <a class="btn btn--ghost btn--sm" href="{% url 'core:part_edit' part.PartID %}">Edit</a>
+                <a class="btn btn--ghost btn--sm" href="{% url 'core:part_usage_history' part.PartID %}">History</a>
+                {% if part.IsActive %}
+                  <form class="inline-form" method="post"
+                        action="{% url 'core:part_deactivate' part.PartID %}"
+                        data-confirm="Deactivate {{ part.PartName }}? It can no longer be used on new repairs.">
+                    {% csrf_token %}
+                    <button class="btn btn--ghost btn--sm" type="submit">Deactivate</button>
+                  </form>
+                {% else %}
+                  <form class="inline-form" method="post"
+                        action="{% url 'core:part_reactivate' part.PartID %}">
+                    {% csrf_token %}
+                    <button class="btn btn--ghost btn--sm" type="submit">Reactivate</button>
+                  </form>
+                {% endif %}
+              </td>
+            {% endif %}
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="{% if is_admin %}7{% else %}6{% endif %}">
+              {% if query %}
+                {% include "core/_empty.html" with title="No parts match that search" hint="Try a shorter or different part name." %}
+              {% else %}
+                {% include "core/_empty.html" with title="No parts in the catalogue yet" hint="Add a part so technicians can draw it against a repair job." %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if is_admin %}
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Add a part</h2>
+      <span class="card__hint">Name, unit price, starting stock and reorder threshold</span>
+    </header>
+
+    <form class="form form--inline" method="post" action="{% url 'core:part_create' %}" novalidate>
+      {% csrf_token %}
+      <div class="form-grid form-grid--inline">
+        {% include "core/_field.html" with field=part_form.part_name %}
+        {% include "core/_field.html" with field=part_form.unit_price %}
+        {% include "core/_field.html" with field=part_form.stock_qty %}
+        {% include "core/_field.html" with field=part_form.reorder_threshold %}
+      </div>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Add part</button>
+      </div>
+    </form>
+
+    <p class="note">
+      <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+      </svg>
+      A part is flagged <strong>low stock</strong> as soon as its quantity reaches
+      its reorder threshold, and the flag clears by itself once stock is raised
+      above it. A part that has been used on a repair is
+      <strong>deactivated</strong> rather than deleted, so past repairs and their
+      invoices keep the price they were built from.
+    </p>
+  </section>
+{% endif %}
+{% endblock %}

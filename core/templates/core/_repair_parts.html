@@ -1,0 +1,121 @@
+{# Parts drawn against a repair job (FR10). Included from repair_detail.html. #}
+{# Expected context: repair, parts_usage, parts_cost, invoice, is_admin, #}
+{# can_manage, can_record_parts, parts_form, role_name. #}
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Parts used</h2>
+    {% if parts_usage %}
+      <span class="card__hint">
+        {{ parts_usage|length }} line{{ parts_usage|length|pluralize }}
+        — ${{ parts_cost }} in parts
+      </span>
+    {% else %}
+      <span class="badge badge--muted">None recorded</span>
+    {% endif %}
+  </header>
+
+  {% if parts_usage %}
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">Parts drawn from stock against this repair job</caption>
+        <thead>
+          <tr>
+            <th scope="col">Part</th>
+            <th scope="col" class="num">Qty</th>
+            <th scope="col" class="num">Unit price</th>
+            <th scope="col" class="num">Line total</th>
+            <th scope="col">Recorded by</th>
+            <th scope="col">Used at</th>
+            {% if is_admin %}<th scope="col" class="th-actions">Actions</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in parts_usage %}
+            <tr>
+              <td class="cell-strong">{{ item.PartID.PartName }}</td>
+              <td class="num">{{ item.Qty_Used }}</td>
+              <td class="num">${{ item.Unit_Price }}</td>
+              <td class="num cell-strong">${{ item.line_total }}</td>
+              <td>{{ item.RecordedBy.full_name }}</td>
+              <td>{{ item.UsedAt }}</td>
+              {% if is_admin %}
+                <td class="actions">
+                  {# Offered only while no invoice exists: once the bill is raised,
+                     these lines are what it was calculated from (T4-INV-08). #}
+                  {% if not invoice %}
+                    <form class="inline-form" method="post"
+                          action="{% url 'core:repair_parts_remove' repair.pk item.UsageID %}"
+                          data-confirm="Remove {{ item.Qty_Used }} x {{ item.PartID.PartName }}? The stock will be returned to the catalogue.">
+                      {% csrf_token %}
+                      <button class="btn btn--danger btn--sm" type="submit">Remove</button>
+                    </form>
+                  {% else %}
+                    <span class="badge badge--muted"
+                          title="This job has been invoiced, so its parts cannot be changed">Invoiced</span>
+                  {% endif %}
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+          <tr>
+            <th scope="row" class="cell-strong">Parts total</th>
+            <td class="num"></td>
+            <td class="num"></td>
+            <td class="num cell-strong">${{ parts_cost }}</td>
+            <td colspan="{% if is_admin %}3{% else %}2{% endif %}"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="card__text">
+      No parts have been drawn against this job yet.
+      {# The reason matters more than the fact: it tells the reader whether this
+         is something they can still do or something already closed. #}
+      {% if invoice %}
+        Its invoice has been generated, so the parts list is closed.
+      {% elif repair.Status == 'Not Started' %}
+        Parts are recorded once the work is In Progress.
+      {% elif repair.is_completed %}
+        The job is Completed, so the parts list is closed to changes.
+      {% endif %}
+    </p>
+  {% endif %}
+  {% if can_record_parts %}
+    <h3 class="card__subtitle">Record a part used</h3>
+    <form class="form form--inline" method="post"
+          action="{% url 'core:repair_parts_record' repair.pk %}" novalidate>
+      {% csrf_token %}
+      {# Lets a technician post from their own board and land back on it. #}
+      {% if role_name == 'Technician' %}
+        <input type="hidden" name="next" value="{% url 'core:my_repairs' %}">
+      {% endif %}
+      <div class="form-grid form-grid--inline">
+        {% include "core/_field.html" with field=parts_form.part %}
+        {% include "core/_field.html" with field=parts_form.qty_used %}
+      </div>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Record part</button>
+        <a class="btn btn--ghost" href="{% url 'core:part_list' %}">View catalogue</a>
+      </div>
+    </form>
+
+    <p class="note">
+      <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+      </svg>
+      Recording a part reduces its stock immediately, in the same transaction as
+      this line, and copies the part's current price onto it — so a later price
+      change cannot alter what this repair cost. Only active parts are offered, and
+      the quantity cannot exceed what is in stock.
+    </p>
+  {% elif can_manage and repair.Status == 'In Progress' and not invoice %}
+    {# In Progress and open, but nothing to choose from: a catalogue problem #}
+    {# rather than a lifecycle one, so it is named as such. #}
+    <p class="note">
+      No active parts are in the catalogue yet, so there is nothing to record
+      against this job.
+    </p>
+  {% endif %}
+</section>

@@ -1,0 +1,104 @@
+{% extends "core/base.html" %}
+{% block title %}Low stock — ARMS{% endblock %}
+{% block content %}
+{# Low-stock review (FR10, T4-INV-10, Administrator only). Each shortage carries #}
+{# its own restock form so the list can be worked top to bottom without leaving #}
+{# the page. Restocking above the threshold is what clears the flag. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:part_list' %}">Parts</a></li>
+        <li><span class="crumbs__current" aria-current="page">Low stock</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Low stock review</h1>
+    <p class="page-head__sub">
+      {{ parts|length }} active part{{ parts|length|pluralize }} at or below the
+      reorder threshold{% if out_of_stock_count %}
+      — {{ out_of_stock_count }} out of stock{% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:part_list' %}">Full catalogue</a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Parts to reorder</h2>
+    <span class="card__hint">Enter the counted shelf quantity to restock</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Active parts at or below their reorder threshold, with a restock form for each</caption>
+      <thead>
+        <tr>
+          <th scope="col">Part</th>
+          <th scope="col" class="num">Unit price</th>
+          <th scope="col" class="num">In stock</th>
+          <th scope="col" class="num">Reorder at</th>
+          <th scope="col" class="num">Short by</th>
+          <th scope="col" class="th-actions">Restock</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for part in parts %}
+          <tr>
+            <td class="cell-strong">
+              {{ part.PartName }}
+              <span class="mono">#{{ part.PartID }}</span>
+            </td>
+            <td class="num">${{ part.UnitPrice }}</td>
+            <td class="num cell-strong">{{ part.StockQty }}</td>
+            <td class="num">{{ part.ReorderThreshold }}</td>
+            <td class="num">
+              {# How far below the threshold the shelf has fallen, computed in #}
+              {# the view so the arithmetic lives in one place. Zero when the #}
+              {# stock sits exactly on the threshold, which still counts as low. #}
+              {{ part.short_by }}
+            </td>
+            <td class="actions">
+              <form class="inline-form" method="post"
+                    action="{% url 'core:part_restock' part.PartID %}">
+                {% csrf_token %}
+                <label class="sr-only" for="id_stock_qty_{{ part.PartID }}">
+                  New stock quantity for {{ part.PartName }}
+                </label>
+                <input class="form-control" type="number" min="0" step="1"
+                       id="id_stock_qty_{{ part.PartID }}" name="stock_qty"
+                       value="{{ part.StockQty }}">
+                <button class="btn btn--primary btn--sm" type="submit">Restock</button>
+              </form>
+              <a class="btn btn--ghost btn--sm"
+                 href="{% url 'core:part_edit' part.PartID %}?next={% url 'core:part_low_stock' %}">Edit</a>
+              <a class="btn btn--ghost btn--sm"
+                 href="{% url 'core:part_usage_history' part.PartID %}">History</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6">
+              {% include "core/_empty.html" with title="Nothing needs reordering" hint="Every active part is above its reorder threshold." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    The low-stock flag is not stored anywhere: it is the comparison
+    <span class="mono">StockQty &le; ReorderThreshold</span> made at the moment the
+    page is read. Restocking above the threshold clears it immediately, with no
+    separate step, and a part drawn down to the threshold by a repair appears here
+    as soon as that usage is recorded.
+  </p>
+</section>
+{% endblock %}

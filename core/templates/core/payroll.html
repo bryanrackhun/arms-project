@@ -1,0 +1,174 @@
+{% extends "core/base.html" %}
+{% block title %}Payroll — ARMS{% endblock %}
+{% block content %}
+{# Technician payroll calculation (FR12, Administrator only). This page runs #}
+{# the calculation and shows the result; nothing is stored, so the same period #}
+{# can be recalculated or reviewed as often as needed. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Payroll</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Technician payroll</h1>
+    <p class="page-head__sub">
+      {% if report %}
+        {{ report.technician_count }} technician{{ report.technician_count|pluralize }} —
+        {{ report.job_count }} completed job{{ report.job_count|pluralize }} —
+        ${{ report.grand_total }} total
+      {% else %}
+        Calculate pay for the repair jobs completed in a chosen date range
+      {% endif %}
+    </p>
+  </div>
+</div>
+
+<section class="card card--filters">
+  <form class="filter-bar" method="get" action="{% url 'core:payroll' %}" novalidate>
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid form-grid--inline">
+      {% include "core/_field.html" with field=form.start_date %}
+      {% include "core/_field.html" with field=form.end_date %}
+      {% include "core/_field.html" with field=form.technician %}
+    </div>
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Calculate payroll</button>
+      {% if report %}
+        <a class="btn btn--ghost" href="{% url 'core:payroll' %}">Reset to this month</a>
+      {% endif %}
+    </div>
+  </form>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    A job counts in the period it was <strong>completed</strong>, not the period it
+    was raised. Pay is the service's estimated duration at the technician's hourly
+    rate — there is no timesheet, so this is estimated rather than actual hours.
+  </p>
+</section>
+{% if report %}
+  {# Technicians left out of the run, named and explained: a missing hourly rate #}
+  {# is a data gap to fix, not a zero to be paid, so it is reported separately #}
+  {# from the totals rather than folded into them. #}
+  {% for excluded in report.excluded %}
+    <div class="alert alert--warning" role="status">
+      <span class="alert__icon" aria-hidden="true">&#9888;</span>
+      <div class="alert__body">
+        <p class="alert__text">{{ excluded.reason }}</p>
+      </div>
+    </div>
+  {% endfor %}
+
+  {% if report.job_count == 0 %}
+    <div class="alert alert--info" role="status">
+      <span class="alert__icon" aria-hidden="true">&#8505;</span>
+      <div class="alert__body">
+        <p class="alert__text">
+          No repair jobs were completed in this period, so every total is zero.
+        </p>
+      </div>
+    </div>
+  {% endif %}
+
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Payroll summary</h2>
+      <span class="card__hint">{{ report.start_date }} to {{ report.end_date }}</span>
+    </header>
+
+    <div class="stats">
+      <article class="stat stat--brand">
+        <div class="stat__num">{{ report.technician_count }}</div>
+        <div class="stat__lbl">Technician{{ report.technician_count|pluralize }}</div>
+        <div class="stat__meta">included in this run</div>
+      </article>
+      <article class="stat">
+        <div class="stat__num">{{ report.job_count }}</div>
+        <div class="stat__lbl">Completed job{{ report.job_count|pluralize }}</div>
+        <div class="stat__meta">in the date range</div>
+      </article>
+      <article class="stat">
+        <div class="stat__num">${{ report.grand_total }}</div>
+        <div class="stat__lbl">Grand total</div>
+        <div class="stat__meta">to be paid</div>
+      </article>
+      {% if report.excluded %}
+        <article class="stat">
+          <div class="stat__num">{{ report.excluded|length }}</div>
+          <div class="stat__lbl">Excluded</div>
+          <div class="stat__meta">no hourly rate recorded</div>
+        </article>
+      {% endif %}
+    </div>
+  </section>
+
+  {# One card per technician, each with the job-by-job breakdown behind its total, #}
+  {# so the administrator can see exactly which jobs produced the figure. #}
+  {% for entry in report.entries %}
+    <section class="card">
+      <header class="card__head">
+        <h2 class="card__title">{{ entry.technician_name }}</h2>
+        <span class="card__hint">
+          ${{ entry.hourly_rate }}/hr —
+          {{ entry.job_count }} job{{ entry.job_count|pluralize }} —
+          <strong>${{ entry.total }}</strong>
+        </span>
+      </header>
+
+      {% if entry.message %}
+        <p class="note">{{ entry.message }}</p>
+      {% endif %}
+
+      {% if entry.lines %}
+        <div class="table-wrap">
+          <table class="data">
+            <caption class="sr-only">Completed jobs for {{ entry.technician_name }} in this period</caption>
+            <thead>
+              <tr>
+                <th scope="col" class="num">Job</th>
+                <th scope="col">Customer</th>
+                <th scope="col">Service</th>
+                <th scope="col" class="num">Est. hours</th>
+                <th scope="col" class="num">Amount</th>
+                <th scope="col">Completed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for line in entry.lines %}
+                <tr>
+                  <td class="mono num">
+                    <a href="{% url 'core:repair_detail' line.repair_id %}">#{{ line.repair_id }}</a>
+                  </td>
+                  <td class="cell-strong">{{ line.customer_name }}</td>
+                  <td>{{ line.service_name }}</td>
+                  <td class="num">{{ line.estimated_hours }}</td>
+                  <td class="num cell-strong">${{ line.amount }}</td>
+                  <td>{{ line.completed_at }}</td>
+                </tr>
+              {% endfor %}
+              <tr>
+                <th scope="row" class="cell-strong" colspan="4">Total for {{ entry.technician_name }}</th>
+                <td class="num cell-strong">${{ entry.total }}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </section>
+  {% endfor %}
+{% endif %}
+{% endblock %}

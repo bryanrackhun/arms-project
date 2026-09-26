@@ -1,0 +1,119 @@
+{% extends "core/base.html" %}
+{% block title %}{{ part.PartName }} — usage history — ARMS{% endblock %}
+{% block content %}
+{# A part's usage history (FR10, T4-INV-11, Administrator only): the audit #}
+{# trail behind the stock figure. Each line names the repair it was drawn #}
+{# against, when, and who recorded it. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:part_list' %}">Parts</a></li>
+        <li><span class="crumbs__current" aria-current="page">{{ part.PartName }}</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">{{ part.PartName }}</h1>
+    <p class="page-head__sub">
+      Part #{{ part.PartID }} —
+      {{ total_used }} unit{{ total_used|pluralize }} used across
+      {{ usage|length }} repair record{{ usage|length|pluralize }}
+      {% if not part.IsActive %}
+        <span class="badge badge--inactive">Deactivated</span>
+      {% elif part.is_low_stock %}
+        <span class="badge badge--pending">Low stock</span>
+      {% endif %}
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:part_edit' part.PartID %}">Edit part</a>
+    <a class="btn btn--ghost" href="{% url 'core:part_list' %}">Back to catalogue</a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Stock position</h2>
+    <span class="card__hint">Drawn down by the usage below</span>
+  </header>
+
+  <div class="stats">
+    <article class="stat stat--brand">
+      <div class="stat__num">{{ part.StockQty }}</div>
+      <div class="stat__lbl">In stock now</div>
+      <div class="stat__meta">reorder at {{ part.ReorderThreshold }}</div>
+    </article>
+    <article class="stat">
+      <div class="stat__num">{{ total_used }}</div>
+      <div class="stat__lbl">Units used</div>
+      <div class="stat__meta">across all repairs</div>
+    </article>
+    <article class="stat">
+      <div class="stat__num">${{ part.UnitPrice }}</div>
+      <div class="stat__lbl">Current unit price</div>
+      <div class="stat__meta">past usage keeps the price it was drawn at</div>
+    </article>
+  </div>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Usage records</h2>
+    <span class="card__hint">Most recent first</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Every time this part was drawn against a repair job</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">ID</th>
+          <th scope="col">Repair job</th>
+          <th scope="col">Customer</th>
+          <th scope="col" class="num">Qty used</th>
+          <th scope="col" class="num">Unit price</th>
+          <th scope="col" class="num">Line total</th>
+          <th scope="col">Recorded by</th>
+          <th scope="col">Used at</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in usage %}
+          <tr>
+            <td class="mono num">{{ item.UsageID }}</td>
+            <td>
+              <a href="{% url 'core:repair_detail' item.RepairID.RepairID %}">
+                Job #{{ item.RepairID.RepairID }}
+              </a>
+              {% include "core/_repair_status.html" with repair=item.RepairID %}
+            </td>
+            <td>{{ item.RepairID.customer_name }}</td>
+            <td class="num cell-strong">{{ item.Qty_Used }}</td>
+            <td class="num">${{ item.Unit_Price }}</td>
+            <td class="num">${{ item.line_total }}</td>
+            <td>{{ item.RecordedBy.full_name }}</td>
+            <td>{{ item.UsedAt }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="8">
+              {% include "core/_empty.html" with title="Never used on a repair" hint="This part has no usage history, so it can still be deleted rather than only deactivated." %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    The <strong>unit price</strong> on each line is the one copied when the part was
+    fitted, not today's catalogue price — so this history still explains what past
+    invoices were built from even after the price has changed. Having any record here
+    is also what stops the part being deleted: it can only be deactivated.
+  </p>
+</section>
+{% endblock %}

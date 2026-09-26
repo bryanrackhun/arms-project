@@ -7,6 +7,7 @@ write invalid data either.
 """
 
 from datetime import date, datetime, time
+from decimal import Decimal
 
 from django import forms
 from django.utils import timezone as dj_timezone
@@ -15,12 +16,16 @@ from .models import (
     APPOINTMENT_STATUSES,
     APPOINTMENT_TRANSITIONS,
     BAY_AVAILABLE,
+    PAYMENT_STATUSES,
     REPAIR_PRIORITIES,
     REPAIR_PRIORITY_ROUTINE,
     REPAIR_STATUSES,
     REPAIR_TRANSITIONS,
+    TAX_RATE_MAX,
+    TAX_RATE_MIN,
     Appointment,
     Inspection,
+    Parts,
     Repair,
     Role,
     Service,
@@ -36,6 +41,7 @@ from .services import (
     MIN_PASSWORD_LENGTH,
     PHONE_PATTERN,
     VIN_PATTERN,
+    default_payroll_range,
     list_appointments_eligible_for_repair,
 )
 
@@ -1309,4 +1315,337 @@ class RepairFilterForm(forms.Form):
         empty_label="All technicians",
         widget=forms.Select(attrs={"class": "form-control"}),
     )
+
+
+# ---------------------------------------------------------------------------
+# Timebox 4 - inventory, invoicing, payroll and the public status lookup
+# ---------------------------------------------------------------------------
+#: The floor for every money field in this module. Named rather than written as a
+#: bare ``0`` at each call site so the intent - "this amount cannot go below
+#: zero" - is stated once and cannot be mistyped as a different bound.
+MONEY_MIN = Decimal("0.00")
+
+
+class PartForm(forms.Form):
+    """Add or amend a spare part in the catalogue (FR10, T4-INV-01/03).
+
+    Used for both creating and editing, mirroring ``ServiceBayForm``: the same
+    field set and the same validation either way, so the two screens cannot drift
+    apart on what they accept.
+
+    The numeric fields use ``DecimalField`` / ``IntegerField`` rather than text so
+    a non-numeric entry is caught here as an inline field error instead of
+    surfacing as a page-level message. The bounds duplicate the model validators on
+    purpose - the form's job is to tell the user before anything reaches the
+    database, and :mod:`core.services` re-checks independently so posting straight
+    to the URL cannot bypass either.
+    """
+
+    part_name = forms.CharField(
+        label="Part name",
+        max_length=100,
+        widget=forms.TextInput(
+            attrs={"class": "form-control", "placeholder": "e.g. Brake pads"}
+        ),
+        help_text="Must be unique across the catalogue.",
+    )
+    unit_price = forms.DecimalField(
+        label="Unit price",
+        max_digits=10,
+        decimal_places=2,
+        min_value=MONEY_MIN,
+        widget=forms.NumberInput(
+            attrs={"class": "form-control", "step": "0.01", "min": "0"}
+        ),
+        help_text="Copied onto each repair at the time the part is used.",
+    )
+    stock_qty = forms.IntegerField(
+        label="Stock quantity",
+        min_value=0,
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+        help_text="Reduced automatically as parts are drawn against repairs.",
+    )
+    reorder_threshold = forms.IntegerField(
+        label="Reorder threshold",
+        min_value=0,
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+        help_text="The part is flagged low stock once stock reaches this.",
+    )
+
+    def __init__(self, *args, part: Parts | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.part = part
+        if part is not None:
+            self.fields["part_name"].initial = part.PartName
+            self.fields["unit_price"].initial = part.UnitPrice
+            self.fields["stock_qty"].initial = part.StockQty
+            self.fields["reorder_threshold"].initial = part.ReorderThreshold
+
+    def clean_part_name(self) -> str:
+        name = (self.cleaned_data.get("part_name") or "").strip()
+        if not name:
+            raise forms.ValidationError("A part name is required.")
+        # Checked against the catalogue so the duplicate is reported inline
+        # rather than as a database error; editing a part may keep its own name.
+        clash = Parts.objects.filter(PartName__iexact=name)
+        if self.part is not None:
+            clash = clash.exclude(pk=self.part.pk)
+        if clash.exists():
+            raise forms.ValidationError(
+                f"A part named '{name}' already exists."
+            )
+        return name
+
+
+class PartsUsageForm(forms.Form):
+    """Record a part drawn against a repair job (FR10, T4-INV-05).
+
+    The part dropdown lists only **active** parts, so a retired one cannot be
+    selected for new work even though it still appears in the administrator's
+    catalogue and in old invoices (T4-INV-04). The quantity is checked against the
+    stock actually held, which gives an inline error for the common over-draw; the
+    service layer re-checks under a row lock, because the figure can move between
+    the form being displayed and being submitted.
+    """
+
+    part = forms.ModelChoiceField(
+        label="Part",
+        queryset=Parts.objects.none(),
+        empty_label="— Select a part —",
+        widget=forms.Select(attrs={"class": "form-control"}),
+        help_text="Only active parts can be used on new repairs.",
+    )
+    qty_used = forms.IntegerField(
+        label="Quantity",
+        min_value=1,
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
+        help_text="Must not exceed the stock currently held.",
+    )
+
+    def __init__(self, *args, repair: Repair | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.repair = repair
+        self.fields["part"].queryset = Parts.objects.filter(
+            IsActive=True
+        ).order_by("PartName", "PartID")
+
+    def clean_qty_used(self) -> int:
+        quantity = self.cleaned_data.get("qty_used")
+        if quantity is None:
+            raise forms.ValidationError("Enter the quantity used.")
+        if quantity <= 0:
+            raise forms.ValidationError("Quantity must be greater than zero.")
+        # Stock is re-read from the database rather than trusted from the rendered
+        # option, so a stale page cannot authorise more than is actually held.
+        part = self.cleaned_data.get("part")
+        if part is not None:
+            held = Parts.objects.filter(pk=part.pk).values_list(
+                "StockQty", flat=True
+            ).first()
+            if held is not None and quantity > held:
+                raise forms.ValidationError(
+                    f"Only {held} x {part.PartName} in stock; {quantity} cannot be "
+                    "used on this repair."
+                )
+        return quantity
+
+
+class InvoiceGenerateForm(forms.Form):
+    """Enter the tax rate for a completed job and raise its bill (FR11).
+
+    Only the tax rate is typed: labour and parts are copied from the service
+    catalogue and the recorded usage lines, so there is nothing else for the
+    receptionist to enter - and nothing they could enter wrong (T4-INV-21/22).
+
+    The zero-parts case is a confirmation rather than a refusal (T4-INV-25).
+    ``confirm_no_parts`` is a checkbox the generation page only shows once it knows
+    the job has no parts recorded; a labour-only bill is legitimate, but "no
+    parts" is more often a technician who forgot to record them, so the
+    receptionist has to say they mean it. The service layer re-checks this, so
+    unchecking a hidden box cannot slip an unconfirmed labour-only bill through.
+    """
+
+    tax_rate = forms.DecimalField(
+        label="Tax rate (%)",
+        max_digits=5,
+        decimal_places=2,
+        min_value=TAX_RATE_MIN,
+        max_value=TAX_RATE_MAX,
+        widget=forms.NumberInput(
+            attrs={"class": "form-control", "step": "0.01", "min": "0", "max": "100"}
+        ),
+        help_text="As a percentage, e.g. 10 for 10%.",
+    )
+    confirm_no_parts = forms.BooleanField(
+        label="Generate a labour-only invoice",
+        required=False,
+        widget=forms.CheckboxInput(attrs={"class": "form-check"}),
+        help_text="Tick to confirm this job used no parts.",
+    )
+
+    def __init__(self, *args, repair: Repair | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.repair = repair
+        # Only show the confirmation checkbox when it is actually needed, so a job
+        # with parts recorded does not present a pointless box.
+        self.needs_confirmation = (
+            repair is not None and not repair.parts_usage.exists()
+        )
+        if not self.needs_confirmation:
+            del self.fields["confirm_no_parts"]
+
+    def clean_tax_rate(self):
+        rate = self.cleaned_data.get("tax_rate")
+        if rate is None:
+            raise forms.ValidationError("A tax rate is required.")
+        return rate
+
+
+class InvoiceFilterForm(forms.Form):
+    """Filter the invoice list by payment status (T4-INV-28).
+
+    Mirrors ``RepairFilterForm``: one optional dropdown whose choices come from the
+    model constants, so a hand-edited query string cannot produce a confusing
+    empty list.
+    """
+
+    payment_status = forms.ChoiceField(
+        label="Payment status",
+        required=False,
+        choices=[("", "All")] + PAYMENT_STATUSES,
+        widget=forms.Select(attrs={"class": "form-control"}),
+    )
+
+
+class PartRestockForm(forms.Form):
+    """Set a part's stock quantity from the low-stock review page (T4-INV-10).
+
+    A single field rather than the full ``PartForm``: the low-stock page is for
+    correcting quantities, and showing name, price and threshold per row would bury
+    the one thing the administrator came to change.
+
+    The value is a *set*, not an increment - the administrator counts the shelf and
+    enters what is there - so the minimum is 0 rather than 1: restocking to zero is
+    a legitimate correction of a wrong figure, and the low-stock flag stays up
+    until the quantity actually clears the threshold.
+    """
+
+    stock_qty = forms.IntegerField(
+        label="New stock quantity",
+        min_value=0,
+        widget=forms.NumberInput(
+            attrs={"class": "form-control", "min": "0", "style": "max-width:8rem"}
+        ),
+    )
+
+    def __init__(self, *args, part: Parts | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.part = part
+        # Shown in the help text so the administrator can see how far above the
+        # threshold they need to go to clear the flag, without opening the editor.
+        if part is not None:
+            self.fields["stock_qty"].help_text = (
+                f"Currently {part.StockQty}; reorder threshold {part.ReorderThreshold}."
+            )
+
+    def clean_stock_qty(self) -> int:
+        quantity = self.cleaned_data.get("stock_qty")
+        if quantity is None:
+            raise forms.ValidationError("Enter the stock quantity.")
+        if quantity < 0:
+            raise forms.ValidationError("Stock quantity must not be negative.")
+        return quantity
+
+
+class PayrollForm(forms.Form):
+    """Choose the period and the technician to run payroll for (FR12).
+
+    The technician dropdown offers "All technicians" plus each individual, which is
+    the single/all choice T4-PAY-01 asks for; leaving it on All is the month-end
+    run, and picking one answers "what do we owe this person?".
+
+    Both dates default to the current calendar month, because payroll is run at
+    month end and an administrator opening the page then wants that month rather
+    than an empty range they have to type.
+
+    The dates are checked against each other here so a reversed range is reported
+    inline instead of returning an empty report that reads as "nobody did any
+    work". The service layer performs the same check.
+    """
+
+    technician = forms.ModelChoiceField(
+        label="Technician",
+        required=False,
+        queryset=Technician.objects.select_related("StaffID"),
+        empty_label="All technicians",
+        widget=forms.Select(attrs={"class": "form-control"}),
+        help_text="Leave on 'All technicians' for the full payroll run.",
+    )
+    start_date = forms.DateField(
+        label="From",
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+        help_text="Jobs completed on this date count.",
+    )
+    end_date = forms.DateField(
+        label="To",
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+        help_text="Jobs completed on this date count.",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            # Unbound only: a bound submission keeps what was posted so a
+            # validation error re-renders with the administrator's own dates.
+            start, end = default_payroll_range()
+            self.fields["start_date"].initial = start
+            self.fields["end_date"].initial = end
+
+    def clean(self):
+        cleaned = super().clean()
+        start = cleaned.get("start_date")
+        end = cleaned.get("end_date")
+        if start is not None and end is not None and start > end:
+            self.add_error(
+                "start_date", "The start date cannot be after the end date."
+            )
+        return cleaned
+
+
+class RepairStatusLookupForm(forms.Form):
+    """Look up a booking on the public status page (FR14, T4-STS-01).
+
+    One field and no login, because the customer has no account: the reference code
+    they were given at booking is the only credential this page asks for.
+
+    The input is upper-cased and stripped before matching so a code read back over
+    the phone or handwritten on a job card still finds its booking. An unknown code
+    is *not* a form error - it is reported by the status service as a not-found
+    result - so the page can show the same message whether the code was mistyped or
+    simply does not exist, and cannot be used to probe which references are real.
+    """
+
+    reference_code = forms.CharField(
+        label="Booking reference",
+        max_length=16,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control mono",
+                "placeholder": "e.g. AB2CD3EF",
+                "autocomplete": "off",
+                "autocapitalize": "characters",
+                "spellcheck": "false",
+            }
+        ),
+        help_text="The reference you were given when you booked.",
+    )
+
+    def clean_reference_code(self) -> str:
+        code = (self.cleaned_data.get("reference_code") or "").strip().upper()
+        if not code:
+            raise forms.ValidationError("Enter the booking reference you were given.")
+        return code
+
+
+
 

@@ -38,24 +38,30 @@ class DashboardProfileViewTests(_AdminLogged):
         """Only genuinely unbuilt modules are listed as planned.
 
         Timebox 3 moved inspections, repair jobs and service bays from this
-        list into working screens, so the only entries left are the Timebox 4
-        modules. Asserting on them (rather than on the old Phase 2 entries)
+        list into working screens, and Timebox 4 did the same for the parts
+        catalogue, invoices and payroll. What is left is the work with no
+        screen at all: multi-branch (FR13, out of scope) and reporting, which
+        has no requirement in Chapter 5 and would need an FR15 before it could
+        be built.
+
+        Asserting on what remains (rather than on the old Timebox 4 entries)
         keeps this test honest: it fails again the moment a phase is built and
         someone forgets to remove it from the "later phases" card, and it fails
         if a module is removed from the card before it actually exists.
         """
         response = self.client.get(reverse("core:dashboard"))
-        # Remaining future work is the Timebox 4 set, all marked Phase 4.
         self.assertContains(response, "Later phases")
-        self.assertContains(response, "Phase 4")
-        for name in ("Inventory", "Invoices", "Payroll", "Reports"):
+        # The modules with no requirement or no screen remain on the card.
+        for name in ("Multi-branch", "Reports"):
             self.assertContains(response, name)
-        # Timebox 3 modules are no longer planned placeholders: they are real
+        # Timebox 4 modules are no longer planned placeholders: they are real
         # navigation links, so their list entries must be gone from the card.
-        self.assertNotContains(response, "Phase 2")
+        self.assertNotContains(response, "Phase 4")
         self.assertNotContains(response, "Phase 3")
-        self.assertContains(response, reverse("core:repair_list"))
-        self.assertContains(response, reverse("core:bay_list"))
+        self.assertNotContains(response, "Phase 2")
+        self.assertContains(response, reverse("core:part_list"))
+        self.assertContains(response, reverse("core:invoice_list"))
+        self.assertContains(response, reverse("core:payroll"))
 
     def test_profile_shows_own_account(self):
         response = self.client.get(reverse("core:profile"))

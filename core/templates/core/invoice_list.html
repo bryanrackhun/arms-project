@@ -1,0 +1,162 @@
+{% extends "core/base.html" %}
+{% block title %}Invoices — ARMS{% endblock %}
+{% block content %}
+{# Invoicing (FR11, Receptionist and Administrator). Two halves of the billing #}
+{# task on one page: bills raised so far, and the completed jobs waiting for one. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Invoices</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Invoices</h1>
+    <p class="page-head__sub">
+      {{ pending_count }} pending, {{ paid_count }} paid —
+      ${{ total_outstanding }} outstanding
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:repair_list' %}">Repair jobs</a>
+  </div>
+</div>
+
+{% if eligible_repairs %}
+  <div class="pending-banner" role="status">
+    <strong>{{ eligible_repairs|length }}</strong>
+    completed job{{ eligible_repairs|length|pluralize }} waiting to be invoiced.
+  </div>
+{% endif %}
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Generate an invoice</h2>
+    <span class="card__hint">Only completed jobs that have not been billed yet</span>
+  </header>
+
+  {% if eligible_repairs %}
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">Completed repair jobs that have not been invoiced yet</caption>
+        <thead>
+          <tr>
+            <th scope="col" class="num">Job</th>
+            <th scope="col">Customer</th>
+            <th scope="col">Service</th>
+            <th scope="col">Completed</th>
+            <th scope="col" class="th-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for job in eligible_repairs %}
+            <tr>
+              <td class="mono num">{{ job.RepairID }}</td>
+              <td class="cell-strong">{{ job.customer_name }}</td>
+              <td>{{ job.service.ServiceName }}</td>
+              <td>{{ job.CompletedAt|default:"—" }}</td>
+              <td class="actions">
+                {# A link rather than a form submit: generation starts from a
+                   preview page, so the receptionist always sees labour, parts and
+                   any zero-parts warning before an invoice is created. #}
+                <a class="btn btn--primary btn--sm"
+                   href="{% url 'core:invoice_generate' job.RepairID %}">Generate</a>
+                <a class="btn btn--ghost btn--sm"
+                   href="{% url 'core:repair_detail' job.RepairID %}">View job</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="card__text">
+      Every completed job has been invoiced. New bills can be generated from here as
+      jobs are completed.
+    </p>
+  {% endif %}
+</section>
+
+<section class="card card--filters">
+  <form class="filter-bar" method="get" action="{% url 'core:invoice_list' %}">
+    <div class="field">
+      <label class="field__label" for="{{ filter_form.payment_status.id_for_label }}">Payment status</label>
+      {{ filter_form.payment_status }}
+    </div>
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Filter</button>
+      {% if payment_status %}
+        <a class="btn btn--ghost" href="{% url 'core:invoice_list' %}">Clear</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Issued invoices</h2>
+    <span class="card__hint">Newest first</span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Invoices issued by the workshop, with their totals and payment status</caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">Invoice</th>
+          <th scope="col">Repair job</th>
+          <th scope="col">Customer</th>
+          <th scope="col">Service</th>
+          <th scope="col" class="num">Labour</th>
+          <th scope="col" class="num">Parts</th>
+          <th scope="col" class="num">Tax</th>
+          <th scope="col" class="num">Total</th>
+          <th scope="col">Payment</th>
+          <th scope="col">Generated</th>
+          <th scope="col" class="th-actions">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for invoice in invoices %}
+          <tr>
+            <td class="mono num">{{ invoice.InvoiceID }}</td>
+            <td>
+              <a href="{% url 'core:repair_detail' invoice.RepairID.RepairID %}">
+                Job #{{ invoice.RepairID.RepairID }}
+              </a>
+            </td>
+            <td class="cell-strong">{{ invoice.RepairID.customer_name }}</td>
+            <td>{{ invoice.RepairID.AppointmentID.ServiceCode.ServiceName }}</td>
+            <td class="num">${{ invoice.LabourCost }}</td>
+            <td class="num">${{ invoice.PartsCost }}</td>
+            <td class="num">${{ invoice.TaxAmount }} <span class="badge badge--muted">{{ invoice.TaxRate }}%</span></td>
+            <td class="num cell-strong">${{ invoice.TotalAmount }}</td>
+            <td>
+              {% if invoice.is_paid %}
+                <span class="badge badge--active" title="Paid {{ invoice.PaidAt }}">Paid</span>
+              {% else %}
+                <span class="badge badge--pending">Pending</span>
+              {% endif %}
+            </td>
+            <td>{{ invoice.GeneratedAt }}</td>
+            <td class="actions">
+              <a class="btn btn--ghost btn--sm"
+                 href="{% url 'core:invoice_detail' invoice.InvoiceID %}">Open</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="11">
+              {% if payment_status %}
+                {% include "core/_empty.html" with title="No invoices with that payment status" hint="Clear the filter to see every invoice." %}
+              {% else %}
+                {% include "core/_empty.html" with title="No invoices yet" hint="Generate one once a repair job is Completed." %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

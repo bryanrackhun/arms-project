@@ -12,8 +12,9 @@ reference them stay intact.
 """
 
 import secrets
+from decimal import Decimal
 
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -829,6 +830,18 @@ class Repair(models.Model):
         default=REPAIR_NOT_STARTED,
         help_text="Moves Not Started -> In Progress -> Completed.",
     )
+    #: Set once, the moment the job is moved to Completed (T4-DB-01). Payroll
+    #: picks the period a job belongs to from *when the work finished*, not from
+    #: when the job was raised, so a job started in one month and finished in the
+    #: next is paid in the second. It is nullable because a job that has not yet
+    #: finished has no completion date, and it is never overwritten afterwards -
+    #: the lifecycle is one-way, so Completed can only be reached once.
+    CompletedAt = models.DateTimeField(
+        db_column="CompletedAt",
+        null=True,
+        blank=True,
+        help_text="Set once when the job reaches Completed; used by payroll.",
+    )
     CreatedAt = models.DateTimeField(auto_now_add=True, db_column="CreatedAt")
     UpdatedAt = models.DateTimeField(auto_now=True, db_column="UpdatedAt")
 
@@ -879,3 +892,327 @@ class Repair(models.Model):
         """The customer's name, carried through from the appointment."""
         return self.AppointmentID.customer_name
 
+
+# ---------------------------------------------------------------------------
+# Inventory, invoicing and the customer status view (Timebox 4)
+# ---------------------------------------------------------------------------
+# A part is drawn from stock while a job is In Progress; the customer is billed
+# once the job is Completed. Both amounts are *copied* at the moment they are
+# used rather than looked up later, so a catalogue price change cannot silently
+# rewrite a repair that has already been invoiced. The same holds for the
+# service's base cost on the invoice. History is a snapshot, never a live
+# recalculation.
+#: ``choices`` for ``Invoice.PaymentStatus``. Only two states exist: a bill is
+#: either awaiting the customer or settled. There is no "part paid", so the
+#: workshop never has to reason about a partially-collected invoice.
+PAYMENT_PENDING = "Pending"
+PAYMENT_PAID = "Paid"
+
+PAYMENT_STATUSES = [
+    (PAYMENT_PENDING, "Pending"),
+    (PAYMENT_PAID, "Paid"),
+]
+
+#: The tax rate is a percentage (``10`` means 10%), so 100 is the ceiling and two
+#: decimal places let a rate such as 12.5% be entered exactly.
+TAX_RATE_MIN = Decimal("0.00")
+TAX_RATE_MAX = Decimal("100.00")
+
+#: What the public status page may show. Every stage is derived from data the
+#: workshop already recorded (T4-STS-02): nothing here is stored separately, so
+#: the customer's view can never drift out of step with the repair record.
+#:
+#: The list is ordered, which is what makes the derivation a single walk: the
+#: further down a job has got, the later the stage it reports.
+CUSTOMER_STAGE_BOOKED = "Booked"
+CUSTOMER_STAGE_CHECKED_IN = "Vehicle checked in"
+CUSTOMER_STAGE_JOB_ASSIGNED = "Job assigned"
+CUSTOMER_STAGE_INSPECTED = "Vehicle inspected"
+CUSTOMER_STAGE_IN_PROGRESS = "In progress"
+CUSTOMER_STAGE_COMPLETED = "Completed"
+CUSTOMER_STAGE_CANCELLED = "Cancelled"
+
+#: The customer-facing stages in lifecycle order. "Invoice generated" is not a
+#: stage of its own: it is reported as a detail on top of Completed, because a
+#: bill is raised against a finished job rather than being a step the car passes
+#: through.
+CUSTOMER_STAGES = [
+    CUSTOMER_STAGE_BOOKED,
+    CUSTOMER_STAGE_CHECKED_IN,
+    CUSTOMER_STAGE_JOB_ASSIGNED,
+    CUSTOMER_STAGE_INSPECTED,
+    CUSTOMER_STAGE_IN_PROGRESS,
+    CUSTOMER_STAGE_COMPLETED,
+]
+
+
+class Parts(models.Model):
+    """A spare part held in the workshop's inventory (FR10).
+
+    ``StockQty`` is the live figure: it is reduced the moment usage is recorded,
+    in the same transaction as the usage row, so the two can never disagree.
+    ``ReorderThreshold`` is what makes a part "low stock" - the flag is derived
+    from the comparison rather than stored, so restocking clears it with no
+    separate step and it can never be left stale (T4-INV-09/10).
+
+    ``IsActive`` replaces deletion. A part already used on a repair cannot be
+    deleted without breaking that repair's history and its invoice, so
+    deactivating it is the only retirement available - and a deactivated part
+    simply stops being offered to new repairs (T4-INV-04).
+    """
+
+    PartID = models.AutoField(primary_key=True, db_column="PartID")
+    PartName = models.CharField(
+        max_length=100,
+        db_column="PartName",
+        unique=True,
+        help_text="Must be unique; a duplicate name is rejected.",
+    )
+    UnitPrice = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        db_column="UnitPrice",
+        validators=[MinValueValidator(Decimal("0.00"))],
+        help_text="Must not be negative.",
+    )
+    StockQty = models.IntegerField(
+        db_column="StockQty",
+        default=0,
+        validators=[MinValueValidator(0)],
+        help_text="Reduced automatically as parts are used on repairs.",
+    )
+    ReorderThreshold = models.IntegerField(
+        db_column="ReorderThreshold",
+        default=0,
+        validators=[MinValueValidator(0)],
+        help_text="The part is flagged low stock once StockQty reaches this.",
+    )
+    IsActive = models.BooleanField(
+        default=True,
+        db_column="IsActive",
+        help_text="Deactivated parts cannot be used on new repairs.",
+    )
+    CreatedAt = models.DateTimeField(auto_now_add=True, db_column="CreatedAt")
+    UpdatedAt = models.DateTimeField(auto_now=True, db_column="UpdatedAt")
+
+    class Meta:
+        db_table = "Parts"
+        verbose_name = "Part"
+        verbose_name_plural = "Parts"
+        ordering = ["PartName"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(UnitPrice__gte=0),
+                name="ck_parts_unit_price_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(StockQty__gte=0),
+                name="ck_parts_stock_qty_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ReorderThreshold__gte=0),
+                name="ck_parts_reorder_threshold_non_negative",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.PartName} (${self.UnitPrice})"
+
+    @property
+    def is_low_stock(self) -> bool:
+        """True once stock has fallen to or below the reorder threshold (FR10).
+
+        "At or below" rather than strictly "below", so the flag appears the
+        moment the threshold is *reached* - which is the point the administrator
+        needs to reorder. Waiting for stock to pass the threshold would flag too
+        late.
+        """
+        return self.StockQty <= self.ReorderThreshold
+
+
+class PartsUsage(models.Model):
+    """One line of stock drawn against a repair job (FR10).
+
+    ``Unit_Price`` is copied from ``Parts.UnitPrice`` when the usage is recorded
+    and never updated afterwards (T4-INV-07). That is what lets a catalogue price
+    move - a supplier increase, a correction - without altering what any past
+    repair cost or what its invoice says. Reading the price back through
+    ``PartID`` instead would silently re-price history.
+
+    Both foreign keys are ``PROTECT``ed: deleting a part or a repair that has
+    usage history would leave an invoice quoting a line that no longer exists.
+    ``RecordedBy`` too, so the audit trail of who drew the stock outlives the
+    account that drew it.
+    """
+
+    UsageID = models.AutoField(primary_key=True, db_column="UsageID")
+    RepairID = models.ForeignKey(
+        Repair,
+        on_delete=models.PROTECT,
+        db_column="RepairID",
+        related_name="parts_usage",
+        help_text="The repair job the part was used on.",
+    )
+    PartID = models.ForeignKey(
+        Parts,
+        on_delete=models.PROTECT,
+        db_column="PartID",
+        related_name="usage_records",
+        help_text="A part with usage history is deactivated, never deleted.",
+    )
+    Qty_Used = models.IntegerField(
+        db_column="Qty_Used",
+        validators=[MinValueValidator(1)],
+        help_text="Must be greater than zero and no more than the stock held.",
+    )
+    Unit_Price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        db_column="Unit_Price",
+        validators=[MinValueValidator(Decimal("0.00"))],
+        help_text="Copied from the part at the time of use; never recalculated.",
+    )
+    RecordedBy = models.ForeignKey(
+        Staff,
+        on_delete=models.PROTECT,
+        db_column="RecordedBy",
+        related_name="parts_usage_recorded",
+        help_text="The technician or administrator who drew the stock.",
+    )
+    UsedAt = models.DateTimeField(auto_now_add=True, db_column="UsedAt")
+
+    class Meta:
+        db_table = "Parts_usage"
+        verbose_name = "Parts usage"
+        verbose_name_plural = "Parts usage records"
+        ordering = ["UsedAt", "UsageID"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(Qty_Used__gt=0),
+                name="ck_parts_usage_qty_positive",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.Qty_Used} x {self.PartID.PartName} (job #{self.RepairID_id})"
+
+    @property
+    def line_total(self) -> Decimal:
+        """What this line costs: quantity x the price captured at time of use."""
+        return (Decimal(self.Qty_Used) * self.Unit_Price).quantize(Decimal("0.01"))
+
+
+class Invoice(models.Model):
+    """The bill raised against a completed repair job (FR11).
+
+    ``RepairID`` is a one-to-one key: a job is billed once, and a second invoice
+    for the same job is refused by the database as well as by the service layer
+    (T4-INV-20). The link is to the *repair*, not to an individual parts-usage
+    row - that was the correction made to the earlier draft design - because a
+    labour-only job with no parts recorded still has to be invoiceable.
+
+    Every amount is captured at generation and then frozen. ``LabourCost`` is a
+    copy of ``Services.BaseCost`` and ``PartsCost`` a copy of the summed usage
+    lines, so neither catalogue can move an invoice that has already been issued.
+    ``TaxRate`` is entered by the receptionist; ``TaxAmount`` and ``TotalAmount``
+    are calculated from it once and stored, which is what makes a printed bill
+    reproducible later.
+
+    A Paid invoice is final (T4-INV-27): ``PaidAt`` records when it was settled
+    and no field may be edited afterwards.
+    """
+
+    InvoiceID = models.AutoField(primary_key=True, db_column="InvoiceID")
+    RepairID = models.OneToOneField(
+        Repair,
+        on_delete=models.PROTECT,
+        db_column="RepairID",
+        related_name="invoice",
+        help_text="One invoice per repair job.",
+    )
+    LabourCost = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        db_column="LabourCost",
+        validators=[MinValueValidator(Decimal("0.00"))],
+        help_text="Copied from the service's base cost at generation.",
+    )
+    PartsCost = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        db_column="PartsCost",
+        default=Decimal("0.00"),
+        validators=[MinValueValidator(Decimal("0.00"))],
+        help_text="Sum of quantity x unit price for every part used.",
+    )
+    TaxRate = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        db_column="TaxRate",
+        validators=[MinValueValidator(TAX_RATE_MIN), MaxValueValidator(TAX_RATE_MAX)],
+        help_text="Percentage, e.g. 10 for 10%.",
+    )
+    TaxAmount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        db_column="TaxAmount",
+        validators=[MinValueValidator(Decimal("0.00"))],
+        help_text="Calculated from the tax rate at generation.",
+    )
+    TotalAmount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        db_column="TotalAmount",
+        validators=[MinValueValidator(Decimal("0.00"))],
+        help_text="Labour + parts + tax.",
+    )
+    PaymentStatus = models.CharField(
+        max_length=10,
+        db_column="PaymentStatus",
+        choices=PAYMENT_STATUSES,
+        default=PAYMENT_PENDING,
+        help_text="Pending until the customer settles the bill.",
+    )
+    GeneratedBy = models.ForeignKey(
+        Staff,
+        on_delete=models.PROTECT,
+        db_column="GeneratedBy",
+        related_name="invoices_generated",
+        help_text="The receptionist or administrator who raised the bill.",
+    )
+    GeneratedAt = models.DateTimeField(auto_now_add=True, db_column="GeneratedAt")
+    PaidAt = models.DateTimeField(
+        db_column="PaidAt",
+        null=True,
+        blank=True,
+        help_text="Set once, when the invoice is marked Paid.",
+    )
+
+    class Meta:
+        db_table = "Invoices"
+        verbose_name = "Invoice"
+        verbose_name_plural = "Invoices"
+        ordering = ["-GeneratedAt", "InvoiceID"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(TaxRate__gte=0, TaxRate__lte=100),
+                name="ck_invoices_tax_rate_in_range",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(TotalAmount__gte=0),
+                name="ck_invoices_total_non_negative",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Invoice #{self.pk} for job #{self.RepairID_id} ({self.PaymentStatus})"
+
+    @property
+    def is_paid(self) -> bool:
+        """True once the customer has settled the bill."""
+        return self.PaymentStatus == PAYMENT_PAID
+
+    @property
+    def subtotal(self) -> Decimal:
+        """Labour plus parts, before tax - the figure tax was charged on."""
+        return (self.LabourCost + self.PartsCost).quantize(Decimal("0.01"))

@@ -18,11 +18,12 @@ needs no edit here.
 
 import logging
 import re
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import DecimalField, F, Q, Sum
 from django.utils import timezone as dj_timezone
 
 from .models import (
@@ -38,7 +39,17 @@ from .models import (
     APPOINTMENT_TRANSITIONS,
     BAY_AVAILABLE,
     BAY_OCCUPIED,
+    CUSTOMER_STAGE_BOOKED,
+    CUSTOMER_STAGE_CANCELLED,
+    CUSTOMER_STAGE_CHECKED_IN,
+    CUSTOMER_STAGE_COMPLETED,
+    CUSTOMER_STAGE_IN_PROGRESS,
+    CUSTOMER_STAGE_INSPECTED,
+    CUSTOMER_STAGE_JOB_ASSIGNED,
+    CUSTOMER_STAGES,
     MAX_INSPECTION_IMAGES,
+    PAYMENT_PAID,
+    PAYMENT_PENDING,
     REFERENCE_CODE_MAX_ATTEMPTS,
     REPAIR_COMPLETED,
     REPAIR_IN_PROGRESS,
@@ -47,9 +58,14 @@ from .models import (
     REPAIR_PRIORITY_ROUTINE,
     REPAIR_STATUSES,
     REPAIR_TRANSITIONS,
+    TAX_RATE_MAX,
+    TAX_RATE_MIN,
     TERMINAL_APPOINTMENT_STATUSES,
     Appointment,
     Inspection,
+    Invoice,
+    Parts,
+    PartsUsage,
     Repair,
     Role,
     Service,
@@ -105,6 +121,17 @@ VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 #: A registration plate: 2-15 characters of letters, digits, spaces or hyphens.
 LICENSE_PLATE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 \-]{0,13}[A-Za-z0-9]$")
 
+#: How far an inspection's condition notes are summarised on the public status
+#: page. The customer is shown a sentence or two, not the technician's full
+#: notes, so the truncation keeps internal detail off a page with no login.
+CUSTOMER_INSPECTION_SUMMARY_LENGTH = 240
+
+#: Every money figure the workshop handles is stored to two decimal places, so
+#: every calculated amount is rounded to that before it is saved. Half-up is the
+#: conventional billing rounding - a half cent goes to the customer's bill rather
+#: than being truncated away - and using one rounding mode everywhere means the
+#: invoice total always equals the sum of its own parts.
+MONEY_QUANTUM = Decimal("0.01")
 
 
 class ServiceError(Exception):
@@ -1906,10 +1933,16 @@ def set_repair_status(repair_id: int, new_status: str) -> Repair:
 
     bay_id = repair.BayID_id
     repair.Status = new_status
+    if new_status == REPAIR_COMPLETED:
+        # T4-DB-01: stamp the completion moment once. Payroll groups jobs by when
+        # the work finished rather than when it was raised, and the customer's
+        # status page reports this as the point the car was ready. The lifecycle
+        # is one-way, so this can only ever be set the first time.
+        repair.CompletedAt = dj_timezone.now()
 
     try:
         with transaction.atomic():
-            repair.save(update_fields=["Status", "UpdatedAt"])
+            repair.save(update_fields=["Status", "CompletedAt", "UpdatedAt"])
             if new_status == REPAIR_COMPLETED:
                 # The bay is free again the moment the work is done, unless
                 # another active job is somehow still parked in it.
@@ -2108,3 +2141,1258 @@ def get_inspection(inspection_id: int) -> Inspection:
     except Inspection.DoesNotExist as exc:
         raise NotFoundError("That inspection does not exist.") from exc
 
+
+# ---------------------------------------------------------------------------
+# Spare-part inventory (FR10, Timebox 4)
+# ---------------------------------------------------------------------------
+#   * stock is the only live figure: recording usage reduces it in the same
+#     transaction, so the two can never disagree (T4-INV-06);
+#   * "low stock" is derived from stock versus threshold, never stored, so
+#     restocking clears the flag with no second step (T4-INV-09/10);
+#   * a part with usage history is deactivated rather than deleted, because
+#     deleting it would erase the price an invoice was built from (T4-INV-04);
+#   * prices are copied onto the usage row at the moment of use, so a later
+#     catalogue change cannot re-price a repair that has already happened
+#     (T4-INV-07).
+# ---------------------------------------------------------------------------
+def _money(value) -> Decimal:
+    """Round ``value`` to two decimal places, half-up, ready for storage.
+
+    Every calculated amount in this module goes through here, so an invoice total
+    always equals the sum of its own stored parts rather than differing by a
+    rounding cent when re-added.
+    """
+    return Decimal(value).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def _validate_part_name(part_name: str, exclude_part_id: int | None = None) -> str:
+    """Return a trimmed, unique part name, or raise.
+
+    Uniqueness is checked here as well as enforced by the schema, so the user gets
+    "that name is already used" rather than a database error. Editing a part may
+    keep its own name, which is what ``exclude_part_id`` is for. The lookup is
+    case-insensitive: "Brake Pads" and "brake pads" are the same part to a
+    technician at the shelf, and letting both through would split one item across
+    two stock figures.
+    """
+    name = (part_name or "").strip()
+    if not name:
+        raise ValidationError("A part name is required.")
+    if len(name) > 100:
+        raise ValidationError("A part name must be 100 characters or fewer.")
+
+    clash = Parts.objects.filter(PartName__iexact=name)
+    if exclude_part_id is not None:
+        clash = clash.exclude(pk=exclude_part_id)
+    if clash.exists():
+        raise DuplicateError(f"A part named '{name}' already exists.")
+    return name
+
+
+def _validate_non_negative(value, label: str, *, integer: bool = False):
+    """Return ``value`` as an int (or Decimal) that is not negative, or raise.
+
+    Shared by every numeric part field because they fail the same way: absent,
+    non-numeric and negative all need a plain message rather than a stack trace.
+    """
+    if value is None or str(value).strip() == "":
+        raise ValidationError(f"{label} is required.")
+    try:
+        number = int(value) if integer else Decimal(str(value).strip())
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise ValidationError(f"{label} must be a number.") from exc
+    if number < 0:
+        raise ValidationError(f"{label} must not be negative.")
+    return number
+
+
+def _validate_unit_price(value) -> Decimal:
+    """A unit price must be present, numeric and not negative (see T4-INV-01)."""
+    return _validate_non_negative(value, "Unit price")
+
+
+def _validate_stock_qty(value) -> int:
+    """A stock quantity must be present, whole and not negative (see T4-INV-01)."""
+    return _validate_non_negative(value, "Stock quantity", integer=True)
+
+
+def _validate_reorder_threshold(value) -> int:
+    """A reorder threshold must be present, whole and not negative (see T4-INV-01)."""
+    return _validate_non_negative(value, "Reorder threshold", integer=True)
+
+
+def create_part(part_name: str, unit_price, stock_qty, reorder_threshold) -> Parts:
+    """Add a part to the catalogue (T4-INV-01).
+
+    The new part starts active. If the administrator enters stock at or below the
+    threshold they chose, the part is flagged low stock immediately - which is
+    correct rather than a defect, since that is precisely the condition the
+    threshold describes.
+    """
+    name = _validate_part_name(part_name)
+    price = _money(_validate_unit_price(unit_price))
+    stock = _validate_stock_qty(stock_qty)
+    threshold = _validate_reorder_threshold(reorder_threshold)
+
+    try:
+        with transaction.atomic():
+            return Parts.objects.create(
+                PartName=name,
+                UnitPrice=price,
+                StockQty=stock,
+                ReorderThreshold=threshold,
+                IsActive=True,
+            )
+    except IntegrityError:
+        # Lost a race with a concurrent insert of the same name; the unique
+        # column is the last line of defence behind _validate_part_name.
+        raise DuplicateError(f"A part named '{name}' already exists.")
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Part creation failed (name=%s).", name)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def get_part(part_id: int) -> Parts:
+    """Return one part, or raise :class:`NotFoundError`."""
+    try:
+        return Parts.objects.get(pk=part_id)
+    except Parts.DoesNotExist as exc:
+        raise NotFoundError("That part does not exist.") from exc
+
+
+def list_parts(include_inactive: bool = True) -> list[Parts]:
+    """Return the parts catalogue, optionally hiding deactivated parts (FR10).
+
+    ``include_inactive`` is False for the dropdown offered when recording usage: a
+    deactivated part is retired, so it must not be selectable for new work even
+    though it still appears in the administrator's full list and in old invoices.
+    """
+    parts = Parts.objects.all()
+    if not include_inactive:
+        parts = parts.filter(IsActive=True)
+    return list(parts.order_by("PartName", "PartID"))
+
+
+def search_parts(query: str, include_inactive: bool = True) -> list[Parts]:
+    """Return parts whose name matches ``query``, for the catalogue search box."""
+    text = (query or "").strip()
+    if not text:
+        return list_parts(include_inactive=include_inactive)
+    parts = Parts.objects.filter(PartName__icontains=text)
+    if not include_inactive:
+        parts = parts.filter(IsActive=True)
+    return list(parts.order_by("PartName", "PartID"))
+
+
+def list_low_stock_parts() -> list[Parts]:
+    """Return the active parts at or below their reorder threshold (T4-INV-09).
+
+    The comparison is pushed into the database rather than done in Python, so the
+    page, its counter and the navigation badge all read one query and cannot
+    disagree. Only active parts qualify: a retired part cannot be restocked, so
+    flagging it would be noise the administrator has to read past.
+    """
+    return list(
+        Parts.objects.filter(IsActive=True, StockQty__lte=F("ReorderThreshold"))
+        .order_by("PartName", "PartID")
+    )
+
+
+def count_low_stock_parts() -> int:
+    """How many active parts need reordering, for the badge and dashboard."""
+    return Parts.objects.filter(
+        IsActive=True, StockQty__lte=F("ReorderThreshold")
+    ).count()
+
+
+def update_part(
+    part_id: int,
+    part_name: str = "",
+    unit_price=None,
+    stock_qty=None,
+    reorder_threshold=None,
+) -> Parts:
+    """Amend a part's catalogue details (T4-INV-03).
+
+    Every argument is optional so an administrator can correct a price without
+    re-typing the stock figure. Changing ``UnitPrice`` here deliberately does not
+    touch any existing ``Parts_usage`` row - those hold the price as it was at the
+    time of use, which is the whole point of copying it (T4-INV-07).
+
+    Updating stock is also how a part is restocked, and therefore what clears the
+    low-stock flag (T4-INV-10). There is no separate "clear flag" action, because
+    the flag is not stored.
+    """
+    part = get_part(part_id)
+
+    fields: dict = {}
+    if part_name:
+        fields["PartName"] = _validate_part_name(part_name, exclude_part_id=part_id)
+    if unit_price is not None:
+        fields["UnitPrice"] = _money(_validate_unit_price(unit_price))
+    if stock_qty is not None:
+        fields["StockQty"] = _validate_stock_qty(stock_qty)
+    if reorder_threshold is not None:
+        fields["ReorderThreshold"] = _validate_reorder_threshold(reorder_threshold)
+
+    if not fields:
+        raise ValidationError("Nothing to update: supply a field to change.")
+
+    try:
+        with transaction.atomic():
+            for field, value in fields.items():
+                setattr(part, field, value)
+            part.save(update_fields=[*fields.keys(), "UpdatedAt"])
+            return part
+    except IntegrityError:
+        raise DuplicateError(f"A part named '{fields['PartName']}' already exists.")
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Part update failed (PartID=%s).", part_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def deactivate_part(part_id: int) -> Parts:
+    """Retire a part without erasing its history (T4-INV-04).
+
+    This is the retirement path for anything already used. Deleting a part that
+    has appeared in ``Parts_usage`` would take the price an existing invoice was
+    built from out of the database; deactivating it keeps every row - and every
+    bill quoting it - intact while stopping it being offered for new repairs.
+    """
+    part = get_part(part_id)
+    if not part.IsActive:
+        raise ValidationError(f"'{part.PartName}' is already deactivated.")
+
+    try:
+        with transaction.atomic():
+            part.IsActive = False
+            part.save(update_fields=["IsActive", "UpdatedAt"])
+            return part
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Part deactivation failed (PartID=%s).", part_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def reactivate_part(part_id: int) -> Parts:
+    """Bring a deactivated part back into the catalogue.
+
+    Offered because deactivation is retirement rather than deletion: a part the
+    workshop stopped stocking may be sourced again, and reactivating it keeps its
+    usage history, where creating a replacement row would start from nothing.
+    """
+    part = get_part(part_id)
+    if part.IsActive:
+        raise ValidationError(f"'{part.PartName}' is already active.")
+
+    try:
+        with transaction.atomic():
+            part.IsActive = True
+            part.save(update_fields=["IsActive", "UpdatedAt"])
+            return part
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Part reactivation failed (PartID=%s).", part_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def part_has_usage(part_id: int) -> bool:
+    """True once a part has been drawn against any repair job.
+
+    The single question that decides whether the catalogue may offer "delete" or
+    only "deactivate".
+    """
+    get_part(part_id)
+    return PartsUsage.objects.filter(PartID_id=part_id).exists()
+
+
+def delete_part(part_id: int) -> None:
+    """Delete a part that has never been used (T4-INV-04).
+
+    Refused the moment the part has usage history, with a message that names
+    deactivation as the alternative, so the administrator is told what to do
+    rather than only that they cannot do this.
+    """
+    part = get_part(part_id)
+    if part_has_usage(part_id):
+        raise ValidationError(
+            f"'{part.PartName}' has been used on a repair job, so it cannot be "
+            "deleted. Deactivate it instead to keep its history intact."
+        )
+
+    try:
+        with transaction.atomic():
+            part.delete()
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Part deletion failed (PartID=%s).", part_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def _require_repair_in_progress(repair: Repair) -> None:
+    """Refuse unless ``repair`` is In Progress and not yet invoiced.
+
+    The single gate on drawing stock: parts are consumed *while the work is being
+    done* (the "Rules" note under T4-INV-05). A job that has not started has
+    nothing fitted yet, and a completed job is closed to change because its bill is
+    calculated from exactly these lines. An invoice is the stronger of the two
+    stops, so it is reported separately - it names the reason the customer would
+    care about.
+    """
+    if repair.Status != REPAIR_IN_PROGRESS:
+        raise ValidationError(
+            f"Parts can only be recorded while a repair job is In Progress; "
+            f"job #{repair.pk} is {repair.Status.lower()}."
+        )
+    if Invoice.objects.filter(RepairID=repair).exists():
+        raise ValidationError(
+            f"Repair job #{repair.pk} has already been invoiced, so its parts "
+            "usage cannot be changed."
+        )
+
+
+def _validate_usage_quantity(qty_used) -> int:
+    """Return a positive whole quantity, or raise.
+
+    Zero is refused rather than accepted as a harmless no-op: a technician
+    recording "none of this part" has picked the wrong row, and writing an empty
+    line would leave stock untouched while cluttering the job's parts list and
+    adding a zero-value row to the invoice.
+    """
+    try:
+        quantity = int(qty_used)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("Quantity must be a whole number.") from exc
+    if quantity <= 0:
+        raise ValidationError("Quantity must be greater than zero.")
+    return quantity
+
+
+def _adjust_stock(part_id: int, delta: int) -> None:
+    """Move a part's stock by ``delta`` (negative draws, positive restores).
+
+    Written as ``StockQty = StockQty + delta`` in the database rather than saving
+    a value read into Python first. That matters when two technicians draw the
+    same part at the same moment: with a read-modify-write, both would read the
+    old figure and the second update would silently discard the first, leaving
+    stock higher than the parts actually fitted. Doing the arithmetic in the
+    database makes both decrements count.
+
+    ``UpdatedAt`` is set explicitly because ``auto_now`` only fires on ``save()``,
+    never on a queryset ``update()``.
+    """
+    Parts.objects.filter(pk=part_id).update(
+        StockQty=F("StockQty") + delta,
+        UpdatedAt=dj_timezone.now(),
+    )
+
+
+def record_parts_usage(
+    repair_id: int, part_id: int, qty_used, staff: Staff
+) -> tuple[PartsUsage, Parts]:
+    """Draw stock against a repair job and record the line (T4-INV-05/06/07).
+
+    Three things happen, all inside one transaction, so stock and usage can never
+    disagree (T4-INV-06):
+
+    1. the quantity is checked against the stock actually held;
+    2. the part's *current* unit price is copied onto the usage row, so a later
+       catalogue change cannot re-price this repair (T4-INV-07);
+    3. ``StockQty`` is reduced by the quantity used.
+
+    The part row is locked with ``select_for_update`` for the duration of the
+    transaction, so the availability check and the decrement cannot be
+    interleaved with another request drawing the same part. If the quantity
+    exceeds the stock, nothing at all is written and the stock is unchanged -
+    which is what TC4-02 checks.
+
+    Authorisation follows the rule already used for inspections: the assigned
+    technician or an Administrator, and nobody else (T4-INV-05). A technician
+    posting against someone else's job is refused here, not only hidden in the
+    template.
+    """
+    repair = get_repair(repair_id)
+    _require_repair_technician(repair, staff)
+    _require_repair_in_progress(repair)
+
+    if staff is None:
+        raise AuthorizationError("You must be signed in to record parts usage.")
+
+    part = get_part(part_id)
+    if not part.IsActive:
+        raise ValidationError(
+            f"'{part.PartName}' has been deactivated and cannot be used on new "
+            "repairs."
+        )
+
+    quantity = _validate_usage_quantity(qty_used)
+
+    try:
+        with transaction.atomic():
+            # Re-read under lock: the check must be made against the stock as it
+            # stands now, not as it stood when this request began.
+            locked = Parts.objects.select_for_update().get(pk=part.pk)
+            if quantity > locked.StockQty:
+                raise ValidationError(
+                    f"Only {locked.StockQty} x {locked.PartName} in stock; "
+                    f"{quantity} cannot be used on this repair."
+                )
+
+            usage = PartsUsage.objects.create(
+                RepairID=repair,
+                PartID=locked,
+                Qty_Used=quantity,
+                # Copied rather than referenced: this assignment is what freezes
+                # the price against later catalogue changes.
+                Unit_Price=locked.UnitPrice,
+                RecordedBy=staff,
+            )
+            _adjust_stock(part.pk, -quantity)
+            locked.refresh_from_db()
+            return usage, locked
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception(
+            "Parts usage recording failed (RepairID=%s, PartID=%s).",
+            repair_id,
+            part_id,
+        )
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def get_parts_usage(usage_id: int) -> PartsUsage:
+    """Return one usage line with its part and job, or raise :class:`NotFoundError`."""
+    try:
+        return PartsUsage.objects.select_related(
+            "PartID", "RepairID", "RecordedBy"
+        ).get(pk=usage_id)
+    except PartsUsage.DoesNotExist as exc:
+        raise NotFoundError("That parts usage record does not exist.") from exc
+
+
+def list_parts_usage(repair_id: int) -> list[PartsUsage]:
+    """Return every parts line recorded against a repair job, oldest first."""
+    get_repair(repair_id)
+    return list(
+        PartsUsage.objects.filter(RepairID_id=repair_id)
+        .select_related("PartID", "RecordedBy")
+        .order_by("UsedAt", "UsageID")
+    )
+
+
+def parts_cost_for_repair(repair_id: int) -> Decimal:
+    """Sum of ``Qty_Used x Unit_Price`` over a job's parts lines (FR11).
+
+    Calculated from the *copied* unit prices rather than from the current
+    catalogue, so the figure quoted to the customer is the one that was true when
+    the parts were fitted. Doing the multiplication in the database keeps the
+    invoice preview and the stored invoice in step, since both call this.
+    """
+    get_repair(repair_id)
+    total = PartsUsage.objects.filter(RepairID_id=repair_id).aggregate(
+        total=Sum(F("Qty_Used") * F("Unit_Price"), output_field=DecimalField())
+    )["total"]
+    return _money(total or 0)
+
+
+def remove_parts_usage(usage_id: int, staff: Staff) -> None:
+    """Delete a usage line recorded in error and put the stock back (T4-INV-08).
+
+    Administrator-only, and only while no invoice exists for the job. Once the
+    customer has been billed, the lines that bill was built from are the record:
+    restoring stock behind them would leave an invoice charging for parts the
+    system now says were never fitted.
+
+    The restore runs in the same transaction as the delete, so the two cannot be
+    separated - a failure part-way leaves the line in place with stock untouched,
+    rather than stock returned for a line that still exists.
+    """
+    if staff is None or staff.role_name != Role.ADMINISTRATOR:
+        raise AuthorizationError(
+            "Only an Administrator can remove a recorded parts usage entry."
+        )
+
+    usage = get_parts_usage(usage_id)
+    repair = usage.RepairID
+    if Invoice.objects.filter(RepairID=repair).exists():
+        raise ValidationError(
+            f"Repair job #{repair.pk} has already been invoiced, so its parts "
+            "usage cannot be removed."
+        )
+
+    part_name = usage.PartID.PartName
+    quantity = usage.Qty_Used
+    part_id = usage.PartID_id
+
+    try:
+        with transaction.atomic():
+            usage.delete()
+            _adjust_stock(part_id, quantity)
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Parts usage removal failed (UsageID=%s).", usage_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+    logger.info(
+        "Parts usage %s removed by staff %s: %s x %s returned to stock.",
+        usage_id,
+        staff.pk,
+        quantity,
+        part_name,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Invoicing (FR11, Timebox 4)
+# ---------------------------------------------------------------------------
+#   * a job is billed once, and only after it is Completed (T4-INV-20);
+#   * every amount is copied at generation, so neither the service catalogue nor
+#     the parts catalogue can move an issued bill (T4-INV-21..23);
+#   * a bill with no parts is legitimate, but the receptionist is made to confirm
+#     it, because "no parts" is more often a forgotten record than a labour-only
+#     job (T4-INV-25);
+#   * marking Paid stamps ``PaidAt`` once and closes the invoice for editing
+#     (T4-INV-26/27).
+# ---------------------------------------------------------------------------
+def _validate_tax_rate(tax_rate) -> Decimal:
+    """Return a tax rate as a percentage, or raise.
+
+    Required, because ``TaxAmount`` is calculated from it (T4-INV-23) and a
+    missing rate is listed as a validation error rather than defaulted. Bounded at
+    0-100: a negative rate would reduce the customer's bill below the cost of the
+    work, and a rate above 100% would charge more in tax than for the repair
+    itself. It is read as a percentage, so ``10`` means 10% - the same convention
+    the form labels use.
+    """
+    if tax_rate is None or str(tax_rate).strip() == "":
+        raise ValidationError("A tax rate is required.")
+    try:
+        rate = Decimal(str(tax_rate).strip())
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise ValidationError("The tax rate must be a number.") from exc
+    if rate < TAX_RATE_MIN:
+        raise ValidationError("The tax rate must not be negative.")
+    if rate > TAX_RATE_MAX:
+        raise ValidationError(
+            f"The tax rate must be {TAX_RATE_MAX}% or less."
+        )
+    return rate
+
+
+def calculate_invoice_amounts(labour_cost, parts_cost, tax_rate) -> dict:
+    """Return the four amounts of a bill, calculated the same way everywhere.
+
+    Split out so the preview shown before generation and the figures actually
+    stored are produced by one function: if the two could differ, the
+    receptionist would confirm one amount and issue another.
+
+    Tax is charged on labour plus parts, and every amount is rounded to two
+    decimal places half-up, so ``tax + labour + parts == total`` holds on the
+    stored row rather than only in the calculation that produced it.
+    """
+    labour = _money(labour_cost)
+    parts = _money(parts_cost)
+    rate = _validate_tax_rate(tax_rate)
+
+    subtotal = labour + parts
+    tax = _money(subtotal * rate / Decimal("100"))
+    return {
+        "labour_cost": labour,
+        "parts_cost": parts,
+        "subtotal": _money(subtotal),
+        "tax_rate": rate.quantize(MONEY_QUANTUM),
+        "tax_amount": tax,
+        "total_amount": _money(subtotal + tax),
+    }
+
+
+def invoice_for_repair(repair_id: int) -> Invoice | None:
+    """Return a job's invoice, or ``None`` if it has not been billed yet."""
+    get_repair(repair_id)
+    return (
+        Invoice.objects.select_related(
+            "RepairID", "RepairID__AppointmentID", "GeneratedBy"
+        )
+        .filter(RepairID_id=repair_id)
+        .first()
+    )
+
+
+def get_invoice_for_repair(repair_id: int) -> Invoice:
+    """Return a job's invoice, or raise if the job has not been billed."""
+    invoice = invoice_for_repair(repair_id)
+    if invoice is None:
+        raise NotFoundError("That repair job has no invoice yet.")
+    return invoice
+
+
+#: Who may raise a bill and take payment. The Receptionist runs the counter where
+#: the customer settles up; the Administrator keeps full access so they can
+#: supervise and correct. A Technician is deliberately absent - the workflow
+#: document forbids them seeing invoices at all, since a bill shows what the
+#: workshop charges rather than what the work involved.
+INVOICE_STAFF_ROLES = frozenset({Role.RECEPTIONIST, Role.ADMINISTRATOR})
+
+#: Fetched together whenever an invoice is shown, so a bill page renders without
+#: a query per related row.
+_INVOICE_SELECT_RELATED = (
+    "RepairID",
+    "RepairID__AppointmentID",
+    "RepairID__AppointmentID__ServiceCode",
+    "RepairID__TechnicianID__StaffID",
+    "GeneratedBy",
+)
+
+
+def list_invoices(payment_status: str = "") -> list[Invoice]:
+    """Return invoices, optionally filtered by payment status (T4-INV-28).
+
+    One query serves the unfiltered list and each filter, exactly as the repair
+    board does, so a filtered view can never disagree with the full one. An
+    unrecognised status is refused rather than silently matching nothing, which
+    would read as "no invoices" to a receptionist who mistyped a query string.
+    """
+    invoices = Invoice.objects.select_related(*_INVOICE_SELECT_RELATED)
+
+    if payment_status:
+        valid = {value for value, _label in PAYMENT_STATUSES}
+        if payment_status not in valid:
+            raise ValidationError(f"'{payment_status}' is not a valid payment status.")
+        invoices = invoices.filter(PaymentStatus=payment_status)
+
+    return list(invoices.order_by("-GeneratedAt", "InvoiceID"))
+
+
+def get_invoice(invoice_id: int) -> Invoice:
+    """Return one invoice with its job, or raise :class:`NotFoundError`."""
+    try:
+        return Invoice.objects.select_related(*_INVOICE_SELECT_RELATED).get(
+            pk=invoice_id
+        )
+    except Invoice.DoesNotExist as exc:
+        raise NotFoundError("That invoice does not exist.") from exc
+
+
+def invoice_preview(repair_id: int, tax_rate) -> dict:
+    """Return the amounts an invoice *would* carry, without writing anything.
+
+    Lets the generation page show the receptionist labour, parts, tax and total
+    before they commit, so the confirmation step - and the zero-parts warning - is
+    about real figures rather than an estimate. It calls the same
+    :func:`calculate_invoice_amounts` the write path does, which is what stops the
+    preview and the stored invoice from ever disagreeing.
+    """
+    repair = get_repair(repair_id)
+    service = repair.AppointmentID.ServiceCode
+    parts_cost = parts_cost_for_repair(repair_id)
+    amounts = calculate_invoice_amounts(service.BaseCost, parts_cost, tax_rate)
+    amounts["service_name"] = service.ServiceName
+    amounts["usage_count"] = repair.parts_usage.count()
+    return amounts
+
+
+def generate_invoice(
+    repair_id: int, tax_rate, staff: Staff, confirm_no_parts: bool = False
+) -> Invoice:
+    """Raise the bill for a completed repair job (T4-INV-20..25).
+
+    Three gates, in the order a receptionist meets them:
+
+    * the job must be **Completed**. A bill for work still on the floor could not
+      include parts a technician has yet to fit (T4-INV-20);
+    * the job must not already have an invoice. One job is billed once, and a
+      second bill would either double-charge the customer or contradict the first
+      (T4-INV-20);
+    * if no parts were recorded, ``confirm_no_parts`` must be set. A labour-only
+      bill is legitimate, so this is a confirmation rather than a refusal - but
+      "no parts" is more often a technician who forgot to record them than a
+      genuinely parts-free job, so the receptionist has to say they mean it
+      (T4-INV-25).
+
+    Every amount is copied onto the row at generation (T4-INV-24): ``LabourCost``
+    from the service's ``BaseCost``, ``PartsCost`` from the summed usage lines.
+    Both are snapshots, so re-pricing either catalogue afterwards leaves this bill
+    exactly as it was issued.
+
+    Billing also finishes the booking the job came in on, since issuing the bill
+    is the workshop's last step for that car. That happens in the same
+    transaction, so an invoice can never exist for an appointment still marked
+    Checked In. It is guarded on the appointment's own status, because a booking
+    that was cancelled or never honoured has no completion to record.
+    """
+    repair = get_repair(repair_id)
+
+    if staff is None or staff.role_name not in INVOICE_STAFF_ROLES:
+        raise AuthorizationError(
+            "Only a Receptionist or an Administrator can generate an invoice."
+        )
+
+    if not repair.is_completed:
+        raise ValidationError(
+            f"Repair job #{repair.pk} is {repair.Status.lower()}; an invoice can "
+            "only be generated once the job is Completed."
+        )
+
+    if Invoice.objects.filter(RepairID=repair).exists():
+        raise DuplicateError(
+            f"Repair job #{repair.pk} has already been invoiced. A repair job can "
+            "only have one invoice."
+        )
+
+    service = repair.AppointmentID.ServiceCode
+    parts_cost = parts_cost_for_repair(repair_id)
+
+    if parts_cost == 0 and not confirm_no_parts:
+        raise ValidationError(
+            f"No parts were recorded against repair job #{repair.pk}. Confirm to "
+            "generate a labour-only invoice."
+        )
+
+    amounts = calculate_invoice_amounts(service.BaseCost, parts_cost, tax_rate)
+    appointment = repair.AppointmentID
+
+    try:
+        with transaction.atomic():
+            invoice = Invoice.objects.create(
+                RepairID=repair,
+                LabourCost=amounts["labour_cost"],
+                PartsCost=amounts["parts_cost"],
+                TaxRate=amounts["tax_rate"],
+                TaxAmount=amounts["tax_amount"],
+                TotalAmount=amounts["total_amount"],
+                PaymentStatus=PAYMENT_PENDING,
+                GeneratedBy=staff,
+            )
+            if appointment.Status == APPOINTMENT_CHECKED_IN:
+                appointment.Status = APPOINTMENT_COMPLETED
+                appointment.save(update_fields=["Status", "UpdatedAt"])
+            return invoice
+    except IntegrityError:
+        # The unique RepairID column is the last line of defence against two
+        # receptionists billing the same job at the same moment.
+        raise DuplicateError(
+            f"Repair job #{repair.pk} has already been invoiced. A repair job can "
+            "only have one invoice."
+        )
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Invoice generation failed (RepairID=%s).", repair_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def mark_invoice_paid(invoice_id: int, staff: Staff) -> Invoice:
+    """Record that the customer has settled the bill (T4-INV-26).
+
+    ``PaidAt`` is stamped once, at the moment of payment, which is the evidence of
+    when the money was collected. Settling an already-Paid invoice is refused
+    rather than quietly ignored, so ``PaidAt`` can never be moved to a later date
+    and rewrite when the customer actually paid. That refusal is also what makes a
+    Paid invoice final (T4-INV-27): there is no code path back to Pending.
+    """
+    if staff is None or staff.role_name not in INVOICE_STAFF_ROLES:
+        raise AuthorizationError(
+            "Only a Receptionist or an Administrator can change an invoice's "
+            "payment status."
+        )
+
+    invoice = get_invoice(invoice_id)
+    if invoice.is_paid:
+        raise ValidationError(
+            f"Invoice #{invoice.pk} is already marked Paid. A paid invoice is "
+            "final and cannot be changed."
+        )
+
+    try:
+        with transaction.atomic():
+            invoice.PaymentStatus = PAYMENT_PAID
+            invoice.PaidAt = dj_timezone.now()
+            invoice.save(update_fields=["PaymentStatus", "PaidAt"])
+            return invoice
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Invoice payment failed (InvoiceID=%s).", invoice_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def list_invoices_for_appointments(appointment_ids) -> list[Invoice]:
+    """Return the invoices for a set of appointments, newest first.
+
+    Lets the appointment list show which bookings have already been billed without
+    a query per row.
+    """
+    return list(
+        Invoice.objects.filter(RepairID__AppointmentID_id__in=list(appointment_ids))
+        .select_related("RepairID", "RepairID__AppointmentID")
+        .order_by("-GeneratedAt", "InvoiceID")
+    )
+
+
+def list_repairs_eligible_for_invoice() -> list[Repair]:
+    """Return completed jobs that have not been billed yet.
+
+    The generation form only offers these, so a receptionist cannot pick a job the
+    service layer would then refuse. Both halves of the gate mirror
+    :func:`generate_invoice` exactly: the work must be finished, and no invoice
+    may already exist for it.
+    """
+    return list(
+        Repair.objects.select_related(*_REPAIR_SELECT_RELATED)
+        .filter(Status=REPAIR_COMPLETED, invoice__isnull=True)
+        .order_by("CompletedAt", "RepairID")
+    )
+
+
+def total_outstanding_invoices() -> Decimal:
+    """Sum of ``TotalAmount`` over invoices still Pending.
+
+    The "money owed to the workshop" figure on the invoice list, aggregated in the
+    database rather than in Python so it stays correct as the invoice count grows.
+    Only Pending invoices count: a Paid one is no longer outstanding.
+    """
+    total = Invoice.objects.filter(PaymentStatus=PAYMENT_PENDING).aggregate(
+        total=Sum("TotalAmount", output_field=DecimalField())
+    )["total"]
+    return _money(total or 0)
+
+
+# ---------------------------------------------------------------------------
+# Technician payroll (FR12, Timebox 4)
+# ---------------------------------------------------------------------------
+#   * a job belongs to the period in which the work *finished*, keyed on
+#     Repairs.CompletedAt, not on when the job was raised (T4-PAY-02);
+#   * pay is estimated: service Est_Duration (minutes) / 60 x the technician's
+#     Hourly_rate. There is no timesheet table, so this is the documented
+#     simplification - actual hours are future work;
+#   * a technician with no completed jobs in the range shows zero and an
+#     information message, never an error (T4-PAY-05);
+#   * a technician with no hourly rate is excluded with a validation message
+#     rather than silently paid nothing (T4-PAY-06).
+# ---------------------------------------------------------------------------
+def default_payroll_range() -> tuple[date, date]:
+    """Return ``(start, end)`` spanning the current calendar month.
+
+    Payroll is run at month end, so opening the page on the last working day of a
+    month should already be showing that month rather than an empty range. The end
+    is the last day of the month, worked out from the calendar rather than assumed
+    to be the 31st, so February and the 30-day months come out correctly.
+    """
+    today = dj_timezone.localdate()
+    start = today.replace(day=1)
+    if start.month == 12:
+        first_of_next = start.replace(year=start.year + 1, month=1)
+    else:
+        first_of_next = start.replace(month=start.month + 1)
+    return start, first_of_next - timedelta(days=1)
+
+
+def _validate_payroll_range(start_date, end_date) -> tuple[date, date]:
+    """Return a start and end date with the start not after the end, or raise.
+
+    Both bounds are inclusive - a job completed on the end date belongs to that
+    period - which is what lets "this month" cover its last day without the
+    administrator adding one to it by hand. A reversed range is refused rather
+    than silently returning nothing, since an empty payroll report looks like "no
+    work was done" rather than "the dates were typed the wrong way round".
+    """
+    if start_date is None or end_date is None:
+        raise ValidationError("A start date and an end date are both required.")
+
+    try:
+        start = (
+            start_date
+            if isinstance(start_date, date)
+            else date.fromisoformat(str(start_date).strip())
+        )
+        end = (
+            end_date
+            if isinstance(end_date, date)
+            else date.fromisoformat(str(end_date).strip())
+        )
+    except ValueError as exc:
+        raise ValidationError("Enter the period as valid dates.") from exc
+
+    if start > end:
+        raise ValidationError("The start date cannot be after the end date.")
+    return start, end
+
+
+def _job_pay(estimated_minutes: int, hourly_rate) -> Decimal:
+    """One job's pay: estimated hours x the technician's hourly rate (T4-PAY-03).
+
+    The duration is stored in whole minutes and converted to hours here rather
+    than rounded first: a 90-minute service is 1.5 hours, and rounding the minutes
+    to the nearest hour before multiplying would pay a 50-minute job the same as a
+    70-minute one. The result is rounded to two decimal places like every other
+    money figure in this module.
+    """
+    hours = Decimal(estimated_minutes) / Decimal(60)
+    return _money(hours * Decimal(hourly_rate))
+
+
+def calculate_technician_payroll(
+    technician: Technician, start_date: date, end_date: date
+) -> dict:
+    """Return one technician's pay for the period, with its job breakdown.
+
+    The breakdown is built first and the total summed from it, so the figure shown
+    is provably the sum of the lines beneath it (T4-PAY-04) rather than a separate
+    calculation that could disagree with them.
+
+    Only jobs with ``CompletedAt`` inside the range count (T4-PAY-02). The filter
+    is on the completion timestamp, not on when the job was created, so a job
+    started in one month and finished in the next is paid in the second - which is
+    the rule the workflow document states explicitly. Jobs completed but missing a
+    stamp (only possible on rows that pre-date the column) are skipped rather than
+    guessed at.
+    """
+    jobs = (
+        Repair.objects.select_related("AppointmentID__ServiceCode")
+        .filter(
+            TechnicianID=technician,
+            Status=REPAIR_COMPLETED,
+            CompletedAt__isnull=False,
+            CompletedAt__date__gte=start_date,
+            CompletedAt__date__lte=end_date,
+        )
+        .order_by("CompletedAt", "RepairID")
+    )
+
+    lines = []
+    total = Decimal("0.00")
+    for job in jobs:
+        service = job.AppointmentID.ServiceCode
+        amount = _job_pay(service.Est_Duration, technician.Hourly_rate)
+        total += amount
+        lines.append(
+            {
+                "repair_id": job.pk,
+                "customer_name": job.customer_name,
+                "service_name": service.ServiceName,
+                "estimated_minutes": service.Est_Duration,
+                "estimated_hours": _money(
+                    Decimal(service.Est_Duration) / Decimal(60)
+                ),
+                "amount": amount,
+                "completed_at": job.CompletedAt,
+            }
+        )
+
+    return {
+        "technician": technician,
+        "technician_name": technician.full_name,
+        "hourly_rate": technician.Hourly_rate,
+        "job_count": len(lines),
+        "lines": lines,
+        "total": _money(total),
+        # Reported rather than raised: no work in a period is a normal thing to
+        # see, and the administrator needs the zero on the page to know the run
+        # happened - not an error that reads as "the calculation failed".
+        "message": (
+            f"{technician.full_name} completed no repair jobs in this period."
+            if not lines
+            else ""
+        ),
+    }
+
+
+def calculate_payroll(
+    start_date, end_date, technician_id: int | None = None
+) -> dict:
+    """Run payroll for one technician or for all of them (T4-PAY-01).
+
+    Returns a report dict rather than writing anything: payroll here is a
+    calculation the administrator reviews, not a stored payslip, so there is no
+    row to roll back and running it twice for the same period is harmless.
+
+    Two kinds of technician are handled specially rather than being paid:
+
+    * one with no hourly rate recorded is **excluded**, with a message naming them
+      (T4-PAY-06). Silently showing zero would hide a data gap the administrator
+      needs to fix - the rate is missing, not the work;
+    * one with a rate but no completed jobs is **included** at zero (T4-PAY-05),
+      because that is a genuine result: they were available and did nothing
+      billable in the window.
+
+    When ``technician_id`` is given the report covers that technician alone, which
+    is what the single-technician selector produces; omitting it covers everyone,
+    and the grand total spans whatever was included.
+    """
+    start, end = _validate_payroll_range(start_date, end_date)
+
+    # The population is every staff account holding the Technician role, not just
+    # those that already have a Technicians row. That distinction is what makes
+    # T4-PAY-06 observable: Timebox 1 creates the account and its hourly rate as
+    # two separate steps, so an account promoted to Technician without a rate yet
+    # is exactly "no hourly rate recorded".
+    staff_accounts = list(
+        Staff.objects.filter(RoleID__RoleName=Role.TECHNICIAN).select_related(
+            "RoleID", "technician_record"
+        )
+    )
+    if technician_id is not None:
+        staff_accounts = [
+            account
+            for account in staff_accounts
+            if getattr(account, "technician_record", None) is not None
+            and account.technician_record.pk == technician_id
+        ]
+        if not staff_accounts:
+            raise NotFoundError("That technician does not exist.")
+
+    entries = []
+    excluded = []
+    grand_total = Decimal("0.00")
+    for account in sorted(
+        staff_accounts, key=lambda item: (item.LastName, item.FirstName)
+    ):
+        technician = getattr(account, "technician_record", None)
+        # Hourly_rate is a NOT NULL column with a positive check, so the rate can
+        # only be absent when the record itself has not been created. Reported
+        # rather than paid zero, because silently showing $0.00 would hide a data
+        # gap the administrator needs to fix - the rate is missing, not the work.
+        if technician is None or technician.Hourly_rate is None:
+            excluded.append(
+                {
+                    "technician_name": account.full_name,
+                    "reason": (
+                        f"{account.full_name} has no hourly rate recorded and was "
+                        "excluded from this payroll run."
+                    ),
+                }
+            )
+            continue
+        entry = calculate_technician_payroll(technician, start, end)
+        entries.append(entry)
+        grand_total += entry["total"]
+
+    return {
+        "start_date": start,
+        "end_date": end,
+        "entries": entries,
+        "excluded": excluded,
+        "grand_total": _money(grand_total),
+        "technician_count": len(entries),
+        "job_count": sum(entry["job_count"] for entry in entries),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Customer repair status view (FR14, Timebox 4)
+# ---------------------------------------------------------------------------
+#   * nothing is stored: every stage is derived from data the workshop already
+#     recorded, so the customer's view cannot drift out of step with the repair
+#     record (T4-STS-02);
+#   * the stages are built as an ordered walk, so "which stage has this reached?"
+#     is the last one that applies rather than a chain of special cases;
+#   * a cancelled booking reports Cancelled instead of a repair stage (T4-STS-09);
+#   * staff names, internal notes and itemised costs never reach this page. The
+#     customer sees progress, not who is doing it or what it costs - which is also
+#     why the invoice is reported as a fact plus its payment status rather than as
+#     a breakdown of the bill.
+# ---------------------------------------------------------------------------
+def _summarise_inspection(description: str) -> str:
+    """Return the condition notes trimmed to a customer-safe summary (T4-STS-06).
+
+    Truncated at a word boundary rather than mid-word, and only ever shortened:
+    the customer gets the gist of what the technician found without the page
+    carrying the full internal record. Whitespace is collapsed first so a
+    multi-paragraph note does not leave ragged gaps in the summary.
+    """
+    text = " ".join((description or "").split())
+    if len(text) <= CUSTOMER_INSPECTION_SUMMARY_LENGTH:
+        return text
+
+    cut = text[:CUSTOMER_INSPECTION_SUMMARY_LENGTH]
+    # Back off to the last space so the summary never ends in half a word. The
+    # halfway guard stops a note whose only space sits near the start from being
+    # chopped down to almost nothing.
+    last_space = cut.rfind(" ")
+    if last_space > CUSTOMER_INSPECTION_SUMMARY_LENGTH // 2:
+        cut = cut[:last_space]
+    return f"{cut.rstrip()}..."
+
+
+def _derive_customer_stages(appointment: Appointment, repair: Repair | None) -> list:
+    """Return the stages this booking has reached, in lifecycle order.
+
+    Each entry is marked reached or not, which is what lets the template draw a
+    progress track instead of a single label: the customer sees how far along the
+    car is, not only where it stopped. A stage counts as reached only when the
+    workshop has actually recorded it, so a repair row with no technician yet does
+    not claim "Job assigned".
+    """
+    checked_in = appointment.CheckedInAt is not None or appointment.Status in (
+        APPOINTMENT_CHECKED_IN,
+        APPOINTMENT_COMPLETED,
+    )
+
+    stages = [
+        {
+            "key": CUSTOMER_STAGE_BOOKED,
+            "label": CUSTOMER_STAGE_BOOKED,
+            "reached": True,
+            "detail": "Your booking has been received.",
+        },
+        {
+            "key": CUSTOMER_STAGE_CHECKED_IN,
+            "label": CUSTOMER_STAGE_CHECKED_IN,
+            "reached": checked_in,
+            "detail": "Your vehicle is at the workshop.",
+        },
+    ]
+
+    # No repair row yet: every workshop stage is still ahead, and none of them can
+    # be claimed from an appointment alone (T4-STS-03/04).
+    if repair is None:
+        stages.extend(
+            {"key": key, "label": key, "reached": False, "detail": ""}
+            for key in (
+                CUSTOMER_STAGE_JOB_ASSIGNED,
+                CUSTOMER_STAGE_INSPECTED,
+                CUSTOMER_STAGE_IN_PROGRESS,
+                CUSTOMER_STAGE_COMPLETED,
+            )
+        )
+        return stages
+
+    assigned = repair.TechnicianID_id is not None
+    inspected = repair.InspectionID_id is not None
+    # A completed job has passed through In Progress, and the lifecycle is one-way,
+    # so finishing counts as having been under way.
+    in_progress = repair.Status in (REPAIR_IN_PROGRESS, REPAIR_COMPLETED)
+    completed = repair.Status == REPAIR_COMPLETED
+
+    stages.extend(
+        [
+            {
+                "key": CUSTOMER_STAGE_JOB_ASSIGNED,
+                "label": CUSTOMER_STAGE_JOB_ASSIGNED,
+                "reached": assigned,
+                # No technician name here: the customer is told work has been
+                # allocated, not who it was allocated to.
+                "detail": "A technician has been assigned to your vehicle.",
+            },
+            {
+                "key": CUSTOMER_STAGE_INSPECTED,
+                "label": CUSTOMER_STAGE_INSPECTED,
+                "reached": inspected,
+                "detail": (
+                    _summarise_inspection(repair.InspectionID.Description)
+                    if inspected
+                    else ""
+                ),
+            },
+            {
+                "key": CUSTOMER_STAGE_IN_PROGRESS,
+                "label": CUSTOMER_STAGE_IN_PROGRESS,
+                "reached": in_progress,
+                "detail": "Work is under way on your vehicle.",
+            },
+            {
+                "key": CUSTOMER_STAGE_COMPLETED,
+                "label": CUSTOMER_STAGE_COMPLETED,
+                "reached": completed,
+                "detail": "The work is finished and your vehicle is ready.",
+            },
+        ]
+    )
+    return stages
+
+
+def get_customer_repair_status(reference_code: str) -> dict:
+    """Derive the customer-facing status for a booking reference (FR14).
+
+    Returns a dict the public template renders directly, and never raises for an
+    unknown reference: it returns ``{'found': False, 'error': ...}`` instead, so the
+    page shows one error message and no status (T4-STS-10) rather than a crash or a
+    blank page the customer cannot interpret.
+
+    The reference is trimmed and upper-cased before matching, because it is
+    hand-written on a job card or read back over the phone. The alphabet already
+    excludes the confusable characters, but a lowercase reading of a code should
+    still find the booking.
+
+    The same error is returned for an empty and for an unknown reference, so the
+    page cannot be used to probe which codes exist. Nothing in the result exposes
+    staff names, internal notes or itemised costs: the invoice is reported as the
+    fact that it exists plus whether it is settled (T4-STS-08), which is what a
+    customer needs in order to know whether to bring their card.
+    """
+    code = (reference_code or "").strip().upper()
+    if not code:
+        return {
+            "found": False,
+            "error": "Please enter the booking reference you were given.",
+        }
+
+    appointment = (
+        Appointment.objects.select_related("ServiceCode", "VehicleID")
+        .filter(ReferenceCode=code)
+        .first()
+    )
+    if appointment is None:
+        return {
+            "found": False,
+            "error": (
+                "We could not find a booking for that reference. Please check it "
+                "and try again."
+            ),
+        }
+
+    repair = (
+        Repair.objects.select_related("TechnicianID__StaffID", "InspectionID")
+        .filter(AppointmentID=appointment)
+        .first()
+    )
+    # Queried rather than read as ``repair.invoice``: that attribute access raises
+    # when a completed job has not been billed yet, which is the normal case.
+    invoice = (
+        Invoice.objects.filter(RepairID=repair).first() if repair is not None else None
+    )
+
+    if appointment.is_cancelled:
+        # Cancelled short-circuits the repair walk: whatever stage the job had
+        # reached, the booking it came in on is over (T4-STS-09).
+        stages = []
+        current_stage = CUSTOMER_STAGE_CANCELLED
+    else:
+        stages = _derive_customer_stages(appointment, repair)
+        reached = [stage for stage in stages if stage["reached"]]
+        current_stage = reached[-1]["key"] if reached else CUSTOMER_STAGE_BOOKED
+
+    return {
+        "found": True,
+        "error": "",
+        "reference_code": appointment.ReferenceCode,
+        "customer_name": appointment.customer_name,
+        "service_name": appointment.ServiceCode.ServiceName,
+        "appointment_date": appointment.AppointmentDate,
+        "appointment_time": appointment.AppointmentTime,
+        "appointment_status": appointment.Status,
+        "is_cancelled": appointment.is_cancelled,
+        "cancel_reason": appointment.CancelReason if appointment.is_cancelled else "",
+        # Deliberately empty until a repair row exists: at "Booked" the customer
+        # has no vehicle details to see and no job to follow (T4-STS-03).
+        "has_repair": repair is not None,
+        "stages": stages,
+        "current_stage": current_stage,
+        "has_invoice": invoice is not None,
+        "invoice_payment_status": invoice.PaymentStatus if invoice else "",
+        "invoice_is_paid": invoice.is_paid if invoice else False,
+        "vehicle_license_plate": (
+            appointment.VehicleID.LicensePlate
+            if repair is not None and appointment.VehicleID_id is not None
+            else ""
+        ),
+    }
