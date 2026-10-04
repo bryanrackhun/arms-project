@@ -7,7 +7,7 @@
     {% if parts_usage %}
       <span class="card__hint">
         {{ parts_usage|length }} line{{ parts_usage|length|pluralize }}
-        — ${{ parts_cost }} in parts
+        — {{ currency }} {{ parts_cost }} in parts
       </span>
     {% else %}
       <span class="badge badge--muted">None recorded</span>
@@ -34,8 +34,8 @@
             <tr>
               <td class="cell-strong">{{ item.PartID.PartName }}</td>
               <td class="num">{{ item.Qty_Used }}</td>
-              <td class="num">${{ item.Unit_Price }}</td>
-              <td class="num cell-strong">${{ item.line_total }}</td>
+              <td class="num">{{ currency }} {{ item.Unit_Price }}</td>
+              <td class="num cell-strong">{{ currency }} {{ item.line_total }}</td>
               <td>{{ item.RecordedBy.full_name }}</td>
               <td>{{ item.UsedAt }}</td>
               {% if is_admin %}
@@ -61,7 +61,7 @@
             <th scope="row" class="cell-strong">Parts total</th>
             <td class="num"></td>
             <td class="num"></td>
-            <td class="num cell-strong">${{ parts_cost }}</td>
+            <td class="num cell-strong">{{ currency }} {{ parts_cost }}</td>
             <td colspan="{% if is_admin %}3{% else %}2{% endif %}"></td>
           </tr>
         </tbody>

@@ -55,11 +55,17 @@ class ReferenceCodeTestCase(RoleTestCase):
         self.service = self.make_service()
         # Tomorrow keeps the slot in the future whenever the suite runs.
         self.date = dj_timezone.localdate() + timedelta(days=1)
+        # The vehicle details the public form now requires. One shared plate is
+        # deliberate: the tests that book several slots are all for the same
+        # customer, so they must resolve to the one vehicle record.
+        self.car_model = "Toyota Corolla"
+        self.license_plate = "REF123"
 
     def _book(self, slot=dt_time(12, 0), first="Sam", last="Customer"):
         return services.book_appointment(
             first, last, self.service.Service_code, self.date, slot,
             phone="0400000000", email="sam@example.com",
+            car_model=self.car_model, license_plate=self.license_plate,
         )
 
     def _form_data(self, slot="12:00"):
@@ -69,6 +75,8 @@ class ReferenceCodeTestCase(RoleTestCase):
             "phone": "0400000000",
             "email": "sam@example.com",
             "service": self.service.Service_code,
+            "car_model": self.car_model,
+            "license_plate": self.license_plate,
             "appointment_date": self.date.isoformat(),
             "appointment_time": slot,
         }
@@ -288,9 +296,16 @@ class BookingSourceTests(ReferenceCodeTestCase):
         self.assertEqual(len(set(codes)), 2)
 
     def test_a_booking_with_a_vehicle_already_linked_keeps_its_code(self):
-        """The walk-in form can link a vehicle straight after booking."""
+        """The walk-in form can link a vehicle straight after booking.
+
+        The booking itself now resolves a vehicle from the plate the form
+        supplies; when a record for that plate already exists it is reused, so
+        the explicitly-chosen vehicle and the made-from-plate one are the same
+        row and the link survives.
+        """
         vehicle = services.create_vehicle(
-            "Toyota", "Corolla", vin="", license_plate="REF-001", year=2018,
+            "Toyota", "Corolla", vin="", license_plate=self.license_plate,
+            year=2018,
         )
         self.login_as(self.receptionist)
 
@@ -397,15 +412,26 @@ class CodeSurvivesLifecycleTests(ReferenceCodeTestCase):
         self.assertEqual(self._code(appointment), original)
 
     def test_linking_a_vehicle_keeps_the_code(self):
+        """Swapping in a different car is a correction, so it replaces the link.
+
+        The booking already linked a vehicle of its own, which is exactly the
+        situation the ``confirm_replace`` guard exists for.
+        """
         appointment = self._book()
         original = appointment.ReferenceCode
         vehicle = services.create_vehicle(
             "Toyota", "Corolla", license_plate="REF-002", year=2018
         )
 
-        services.match_vehicle_to_appointment(appointment.pk, vehicle.VehicleID)
+        services.match_vehicle_to_appointment(
+            appointment.pk, vehicle.VehicleID, confirm_replace=True
+        )
 
         self.assertEqual(self._code(appointment), original)
+        self.assertEqual(
+            Appointment.objects.get(pk=appointment.pk).VehicleID_id,
+            vehicle.VehicleID,
+        )
 
     def test_a_cancelled_code_is_never_handed_to_a_later_booking(self):
         """Cancelling frees the *slot*, not the code."""
@@ -551,6 +577,112 @@ class ReceptionistScreenTests(ReferenceCodeTestCase):
         self.assertContains(self.client.get(url), appointment.ReferenceCode)
         services.cancel_appointment(appointment.pk)
         self.assertContains(self.client.get(url), appointment.ReferenceCode)
+
+
+# ---------------------------------------------------------------------------
+# Status lookup from the landing page
+# ---------------------------------------------------------------------------
+class HomeStatusLookupTests(ReferenceCodeTestCase):
+    """A returning customer can check progress without leaving the home page.
+
+    The landing page runs the same service call and renders the same shared
+    partial as the dedicated status page, so a reference means the same thing in
+    both places. These tests pin that promise.
+    """
+
+    def test_home_shows_the_lookup_form(self):
+        response = self.client.get(reverse("core:home"))
+
+        self.assertContains(response, "Check your repair status")
+        self.assertContains(response, 'name="reference_code"')
+        # The customer can still reach a screen of its own if they prefer.
+        self.assertContains(response, reverse("core:repair_status_lookup"))
+
+    def test_a_valid_reference_renders_the_stage_on_the_home_page(self):
+        appointment = self._book()
+
+        response = self.client.post(
+            reverse("core:home"), {"reference_code": appointment.ReferenceCode}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["status"]["found"])
+        self.assertContains(response, appointment.ReferenceCode)
+
+    def test_lookup_is_case_insensitive_and_trimmed(self):
+        appointment = self._book()
+
+        response = self.client.post(
+            reverse("core:home"),
+            {"reference_code": f"  {appointment.ReferenceCode.lower()} "},
+        )
+
+        self.assertTrue(response.context["status"]["found"])
+
+    def test_an_unknown_reference_shows_one_generic_message(self):
+        self._book()
+
+        response = self.client.post(
+            reverse("core:home"), {"reference_code": "ZZZZZZZZ"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["status"]["found"])
+
+    def test_an_empty_reference_is_an_inline_error_with_no_status(self):
+        response = self.client.post(reverse("core:home"), {"reference_code": ""})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context["status"])
+        self.assertTrue(response.context["status_form"].errors)
+
+    def test_the_reference_can_be_handed_over_in_the_query_string(self):
+        """A confirmation link pre-fills and runs the lookup in one hop."""
+        appointment = self._book()
+
+        response = self.client.get(
+            reverse("core:home"), {"ref": appointment.ReferenceCode}
+        )
+
+        self.assertTrue(response.context["status"]["found"])
+        self.assertContains(response, appointment.ReferenceCode)
+
+    def test_the_status_result_reports_progress_without_a_bill(self):
+        """The public status block shows progress, never itemised costs.
+
+        The landing page's *catalogue* table legitimately lists base costs, so the
+        privacy boundary checked here is the status result specifically: it must
+        report the stage and the service name, and expose neither a price nor a
+        staff name.
+        """
+        appointment = self._book()
+        services.accept_appointment(appointment.pk)
+
+        response = self.client.post(
+            reverse("core:home"), {"reference_code": appointment.ReferenceCode}
+        )
+        content = response.content.decode()
+
+        # The status card, from its heading up to the closing note.
+        status_block = content.split("Current stage", 1)[1].split(
+            "This page shows progress only", 1
+        )[0]
+
+        self.assertIn(appointment.ReferenceCode, status_block)
+        self.assertIn("Booked", status_block)
+        for leak in (str(self.service.BaseCost), "$", self.receptionist.FirstName):
+            with self.subTest(leak=leak):
+                self.assertNotIn(leak, status_block)
+
+    def test_a_signed_in_user_still_skips_the_landing_page(self):
+        """The added form does not become a way back out of the staff area."""
+        self.login_as(self.receptionist)
+
+        response = self.client.post(
+            reverse("core:home"), {"reference_code": "ZZZZZZZZ"}
+        )
+
+        self.assertRedirects(response, reverse("core:dashboard"))
 
 
 # ---------------------------------------------------------------------------

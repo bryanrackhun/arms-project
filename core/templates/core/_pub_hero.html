@@ -1,0 +1,15 @@
+{# Page header band shared by the static content pages. Takes ``crumb`` (the #}
+{# breadcrumb label), ``eyebrow``, ``title``, ``title_id``, ``lead`` and ``narrow`` (align with a single prose column). #}
+<section class="pub-hero{% if narrow %} pub-hero--narrow{% endif %}" aria-labelledby="{{ title_id }}">
+  <div class="home-wrap">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:home' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">{{ crumb }}</span></li>
+      </ol>
+    </nav>
+    <span class="eyebrow">{{ eyebrow }}</span>
+    <h1 class="pub-hero__title" id="{{ title_id }}">{{ title }}</h1>
+    <p class="pub-hero__lead">{{ lead }}</p>
+  </div>
+</section>

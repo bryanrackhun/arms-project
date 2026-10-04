@@ -16,6 +16,8 @@ from .models import (
     APPOINTMENT_STATUSES,
     APPOINTMENT_TRANSITIONS,
     BAY_AVAILABLE,
+    PAYMENT_METHOD_CASH,
+    PAYMENT_METHODS,
     PAYMENT_STATUSES,
     REPAIR_PRIORITIES,
     REPAIR_PRIORITY_ROUTINE,
@@ -43,6 +45,7 @@ from .services import (
     VIN_PATTERN,
     default_payroll_range,
     list_appointments_eligible_for_repair,
+    normalise_license_plate,
 )
 
 
@@ -312,7 +315,9 @@ class ServiceForm(forms.Form):
         if self.service is not None:
             queryset = queryset.exclude(Service_code=self.service.Service_code)
         if queryset.exists():
-            raise forms.ValidationError("That service name is already in use.")
+            raise forms.ValidationError(
+                f"A service named '{name}' already exists."
+            )
         return name
 
 
@@ -457,6 +462,30 @@ class BookingForm(_SlotFormMixin, forms.Form):
         widget=forms.Select(attrs={"class": "form-control"}),
         help_text="Choose from the workshop's service catalogue.",
     )
+    car_model = forms.CharField(
+        label="Car model",
+        max_length=40,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "e.g. Toyota Corolla",
+                "autocomplete": "off",
+            }
+        ),
+        help_text="The car you will bring in.",
+    )
+    license_plate = forms.CharField(
+        label="Registration number",
+        max_length=20,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "e.g. AB12 CDE",
+                "autocomplete": "off",
+            }
+        ),
+        help_text="Spaces and hyphens are ignored, so AB12 CDE and AB12CDE match.",
+    )
     notes = forms.CharField(
         label="Notes",
         required=False,
@@ -480,6 +509,29 @@ class BookingForm(_SlotFormMixin, forms.Form):
         if not value:
             raise forms.ValidationError("Last name is required.")
         return value
+
+    def clean_car_model(self) -> str:
+        value = (self.cleaned_data.get("car_model") or "").strip()
+        if not value:
+            raise forms.ValidationError("Car model is required.")
+        return value
+
+    def clean_license_plate(self) -> str:
+        """Check the plate's shape, then reduce it to its canonical form.
+
+        ``AB12 CDE``, ``ab12-cde`` and ``AB12CDE`` all become ``AB12CDE``, which
+        is the value the service layer looks the vehicle up by - so one car
+        cannot end up recorded twice under two spellings of its plate.
+        """
+        value = (self.cleaned_data.get("license_plate") or "").strip().upper()
+        if not value:
+            raise forms.ValidationError("Registration number is required.")
+        if not LICENSE_PLATE_PATTERN.match(value):
+            raise forms.ValidationError(
+                "Enter a valid registration number (2-15 letters, digits, "
+                "spaces or hyphens)."
+            )
+        return normalise_license_plate(value)
 
     def clean_phone(self) -> str:
         value = (self.cleaned_data.get("phone") or "").strip()
@@ -551,6 +603,30 @@ class AppointmentForm(_SlotFormMixin, forms.Form):
         widget=forms.Select(attrs={"class": "form-control"}),
         help_text="Optional. Usually linked at check-in rather than when booking.",
     )
+    car_model = forms.CharField(
+        label="Car model",
+        max_length=40,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "e.g. Toyota Corolla",
+                "autocomplete": "off",
+            }
+        ),
+        help_text="The car the customer will bring in.",
+    )
+    license_plate = forms.CharField(
+        label="Registration number",
+        max_length=20,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "e.g. AB12 CDE",
+                "autocomplete": "off",
+            }
+        ),
+        help_text="Spaces and hyphens are ignored, so AB12 CDE and AB12CDE match.",
+    )
     notes = forms.CharField(
         label="Notes",
         required=False,
@@ -574,6 +650,24 @@ class AppointmentForm(_SlotFormMixin, forms.Form):
         if not value:
             raise forms.ValidationError("Customer last name is required.")
         return value
+
+    def clean_car_model(self) -> str:
+        value = (self.cleaned_data.get("car_model") or "").strip()
+        if not value:
+            raise forms.ValidationError("Car model is required.")
+        return value
+
+    def clean_license_plate(self) -> str:
+        """Canonical plate, checked the same way the public booking form does."""
+        value = (self.cleaned_data.get("license_plate") or "").strip().upper()
+        if not value:
+            raise forms.ValidationError("Registration number is required.")
+        if not LICENSE_PLATE_PATTERN.match(value):
+            raise forms.ValidationError(
+                "Enter a valid registration number (2-15 letters, digits, "
+                "spaces or hyphens)."
+            )
+        return normalise_license_plate(value)
 
     def clean_phone(self) -> str:
         value = (self.cleaned_data.get("phone") or "").strip()
@@ -751,7 +845,7 @@ class VehicleForm(forms.Form):
                 "Enter a valid registration number (2-15 letters, digits, "
                 "spaces or hyphens)."
             )
-        return value or None
+        return normalise_license_plate(value) or None
 
     def clean_model(self) -> str:
         value = (self.cleaned_data.get("model") or "").strip()
@@ -866,7 +960,7 @@ class VehicleCheckInForm(forms.Form):
                 "Enter a valid registration number (2-15 letters, digits, "
                 "spaces or hyphens)."
             )
-        return value or None
+        return normalise_license_plate(value) or None
 
     def clean_model(self) -> str:
         value = (self.cleaned_data.get("model") or "").strip()
@@ -1645,6 +1739,21 @@ class RepairStatusLookupForm(forms.Form):
         if not code:
             raise forms.ValidationError("Enter the booking reference you were given.")
         return code
+
+
+class CustomerPaymentForm(forms.Form):
+    """Choose how to pay an invoice from the public invoice page.
+
+    The choices are :data:`PAYMENT_METHODS`, which holds Cash only for now, so
+    any other value posted is a form error. The service re-checks the same list.
+    """
+
+    payment_method = forms.ChoiceField(
+        label="Payment method",
+        choices=PAYMENT_METHODS,
+        initial=PAYMENT_METHOD_CASH,
+        widget=forms.RadioSelect,
+    )
 
 
 

@@ -17,6 +17,13 @@ from decimal import Decimal
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
+#: The currency every money figure in the workshop is quoted and stored in.
+#: Myanmar Kyat (MMK) has no subunit in practice, but amounts are still held as
+#: two-place decimals so invoice arithmetic stays exact. Defined here, at the
+#: bottom of the import graph, so both the models and the service layer can quote
+#: it without a circular import.
+CURRENCY_CODE = "MMK"
+
 
 class Role(models.Model):
     """A named system role: Administrator, Receptionist or Technician.
@@ -153,7 +160,7 @@ class Technician(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.StaffID.full_name} (${self.Hourly_rate}/hr)"
+        return f"{self.StaffID.full_name} ({CURRENCY_CODE} {self.Hourly_rate}/hr)"
 
     @property
     def full_name(self) -> str:
@@ -201,7 +208,7 @@ class Service(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.ServiceName} (${self.BaseCost})"
+        return f"{self.ServiceName} ({CURRENCY_CODE} {self.BaseCost})"
 
 
 class TechnicianService(models.Model):
@@ -913,6 +920,15 @@ PAYMENT_STATUSES = [
     (PAYMENT_PAID, "Paid"),
 ]
 
+#: How a bill may be settled. Cash is the only method the workshop accepts for
+#: now; a new method is added here, and every form and service check that
+#: validates against this list picks it up.
+PAYMENT_METHOD_CASH = "Cash"
+
+PAYMENT_METHODS = [
+    (PAYMENT_METHOD_CASH, "Cash"),
+]
+
 #: The tax rate is a percentage (``10`` means 10%), so 100 is the ceiling and two
 #: decimal places let a rate such as 12.5% be entered exactly.
 TAX_RATE_MIN = Decimal("0.00")
@@ -1016,7 +1032,7 @@ class Parts(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.PartName} (${self.UnitPrice})"
+        return f"{self.PartName} ({CURRENCY_CODE} {self.UnitPrice})"
 
     @property
     def is_low_stock(self) -> bool:
@@ -1172,6 +1188,14 @@ class Invoice(models.Model):
         choices=PAYMENT_STATUSES,
         default=PAYMENT_PENDING,
         help_text="Pending until the customer settles the bill.",
+    )
+    PaymentMethod = models.CharField(
+        max_length=10,
+        db_column="PaymentMethod",
+        choices=PAYMENT_METHODS,
+        blank=True,
+        default="",
+        help_text="Chosen by the customer or recorded when the bill is settled.",
     )
     GeneratedBy = models.ForeignKey(
         Staff,

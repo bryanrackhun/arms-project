@@ -16,6 +16,11 @@ ADMIN_ONLY_URLS = (
     "core:service_create",
 )
 
+#: Management screens that take a row id, so they cannot be reversed without an
+#: argument. Checked with a real record so the guard is what denies the request
+#: rather than a missing object.
+ADMIN_ONLY_DETAIL_URLS = ("core:service_edit",)
+
 
 class _AuthedCase(RoleTestCase):
     """Logs in a freshly created account for the requested role."""
@@ -53,6 +58,16 @@ class AdministratorPermissionTests(_AuthedCase):
                 response = self.client.get(reverse(url_name))
                 self.assertEqual(response.status_code, 200)
 
+    def test_can_access_row_level_management_screens(self):
+        service = self.make_service()
+        for url_name in ADMIN_ONLY_DETAIL_URLS:
+            with self.subTest(url=url_name):
+                response = self.client.get(
+                    reverse(url_name, args=[service.Service_code])
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "Edit service")
+
     def test_dashboard_shows_admin_stats(self):
         response = self.client.get(reverse("core:dashboard"))
         self.assertContains(response, "Staff by role")
@@ -82,6 +97,20 @@ class ReceptionistPermissionTests(_AuthedCase):
         for url_name in ADMIN_ONLY_URLS:
             with self.subTest(url=url_name):
                 response = self.client.get(reverse(url_name), follow=True)
+                self.assertRedirects(
+                    response,
+                    reverse("core:access_denied"),
+                    target_status_code=403,
+                )
+                self.assertContains(response, "Access denied", status_code=403)
+
+    def test_row_level_management_screens_denied(self):
+        service = self.make_service()
+        for url_name in ADMIN_ONLY_DETAIL_URLS:
+            with self.subTest(url=url_name):
+                response = self.client.get(
+                    reverse(url_name, args=[service.Service_code]), follow=True
+                )
                 self.assertRedirects(
                     response,
                     reverse("core:access_denied"),

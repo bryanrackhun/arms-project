@@ -90,7 +90,7 @@
           <tr>
             <td class="mono num">{{ part.PartID }}</td>
             <td class="cell-strong">{{ part.PartName }}</td>
-            <td class="num">${{ part.UnitPrice }}</td>
+            <td class="num">{{ currency }} {{ part.UnitPrice }}</td>
             <td class="num cell-strong">{{ part.StockQty }}</td>
             <td class="num">{{ part.ReorderThreshold }}</td>
             <td>

@@ -119,6 +119,7 @@
   </header>
   {% endwith %}
 {% endif %}
+{% block public_header %}{% endblock %}
 
 <main class="page" id="main" tabindex="-1">
   {% if messages %}
@@ -147,6 +148,7 @@
     </div>
   </footer>
 {% endif %}
+{% block public_footer %}{% endblock %}
 
 <script src="{% static 'core/js/arms.js' %}" defer></script>
 </body>

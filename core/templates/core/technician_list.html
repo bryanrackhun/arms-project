@@ -66,7 +66,7 @@
               </span>
             </td>
             <td><a class="cell-mail" href="mailto:{{ technician.StaffID.Email }}">{{ technician.StaffID.Email }}</a></td>
-            <td class="num cell-strong">${{ technician.Hourly_rate }}<span class="cell-unit">/hr</span></td>
+            <td class="num cell-strong">{{ currency }} {{ technician.Hourly_rate }}<span class="cell-unit">/hr</span></td>
             <td class="num">
               {% if technician.service_count %}
                 <span class="badge badge--count">{{ technician.service_count }}</span>

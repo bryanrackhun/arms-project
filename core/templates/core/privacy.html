@@ -1,0 +1,162 @@
+{% extends "core/base.html" %}
+{% block title %}Privacy policy — ARMS{% endblock %}
+{% block body_class %}page-home{% endblock %}
+
+{% block public_header %}
+{% include "core/_pubbar.html" %}
+{% endblock %}
+
+{% block content %}
+{# Static privacy page: what the booking form collects and who inside the #}
+{# workshop can see it. Written to match the system's actual behaviour: no #}
+{# customer accounts exist, and the public status lookup shows no internal #}
+{# notes, staff names or itemised costs. #}
+{% include "core/_pub_hero.html" with crumb="Privacy policy" eyebrow="Legal" title="Privacy policy" title_id="privacy-title" lead="What we collect when you book, why we need it, and who inside the workshop can see it." %}
+
+<section class="home-section pub-page" aria-label="Privacy policy">
+  <div class="home-wrap pub-layout">
+    <nav class="pub-toc" aria-label="On this page">
+      <p class="pub-toc__head">On this page</p>
+      <ol class="pub-toc__list">
+        <li><a href="#collect">What we collect</a></li>
+        <li><a href="#use">How we use it</a></li>
+        <li><a href="#accounts">No customer accounts</a></li>
+        <li><a href="#access">Who sees your data</a></li>
+        <li><a href="#public">The public status page</a></li>
+        <li><a href="#invoices">Invoices and payment</a></li>
+        <li><a href="#share">Sharing</a></li>
+        <li><a href="#keep">How long we keep it</a></li>
+        <li><a href="#security">How we protect it</a></li>
+        <li><a href="#rights">Your choices</a></li>
+        <li><a href="#questions">Questions</a></li>
+      </ol>
+    </nav>
+
+    <div class="pub-page__inner">
+      <div class="callout callout--soft">
+        <span class="callout__icon">{% include "core/_pub_icon.html" with name="shield" %}</span>
+        <div>
+          <h2 class="callout__title">The short version</h2>
+          <p>
+            We collect only what we need to book and repair your car. You never
+            create an account, staff see only what their role requires, and the
+            public status page shows progress, not personal or internal details.
+          </p>
+        </div>
+      </div>
+
+      <h2 id="collect">What we collect</h2>
+      <p>
+        When you make an online booking we ask for your name, a phone number or
+        email address (or both), your car's model and registration number, and
+        the service and time you want. Any notes you add are stored with the
+        booking. Reception confirms or corrects the vehicle details when you
+        arrive.
+      </p>
+      <p>
+        While your car is with us, the workshop also records the details of the
+        job itself: the technician assigned, inspection findings, parts used,
+        status changes and the final invoice.
+      </p>
+
+      <h2 id="use">How we use it</h2>
+      <ul class="check-list">
+        <li>{% include "core/_pub_icon.html" with name="check" %}<span>To review and confirm your appointment, and contact you about it.</span></li>
+        <li>{% include "core/_pub_icon.html" with name="check" %}<span>To identify your vehicle at check-in and carry out the repair.</span></li>
+        <li>{% include "core/_pub_icon.html" with name="check" %}<span>To show you the progress of your repair and prepare your invoice.</span></li>
+        <li>{% include "core/_pub_icon.html" with name="check" %}<span>To keep an accurate service history, so we can answer later questions about the work.</span></li>
+      </ul>
+
+      <h2 id="accounts">No customer accounts</h2>
+      <p>
+        You do not create an account with us. The booking reference we issue when
+        the appointment is confirmed is the only credential the public pages ask
+        for. Anyone holding that reference can see the repair's progress, so treat
+        it as you would a receipt.
+      </p>
+
+      <h2 id="access">Who inside the workshop sees your data</h2>
+      <p>
+        Access is limited by role. Reception staff handle bookings, check-ins and
+        invoices; technicians see the jobs assigned to them and record inspections
+        and parts used; administrators manage the staff, catalogue and payroll.
+        Staff sign in with their own accounts, and screens outside a person's role
+        are refused.
+      </p>
+
+      <h2 id="public">The public status page</h2>
+      <p>
+        The public status page deliberately shows no staff names, internal notes
+        or itemised costs. It reports only the stage your repair has reached -
+        booked, checked in, job assigned, inspected, in progress or completed -
+        and, once billed, your invoice.
+      </p>
+
+      <h2 id="invoices">Invoices and payment</h2>
+      <p>
+        When a repair is completed and billed, the invoice records the payment
+        method you choose. The bill is visible through the same booking reference,
+        on the public status page. Payment itself is taken in cash at the counter;
+        we do not collect or store card details.
+      </p>
+
+      <h2 id="share">Sharing</h2>
+      <p>
+        Your booking and repair records are used by the workshop to serve you. We
+        do not sell them or pass them to third parties for marketing.
+      </p>
+      <p>
+        The only people outside the workshop who can see anything about your job
+        are people you give the booking reference to. The reference is the
+        credential: the public pages ask for nothing else and show no more to
+        whoever holds it than what they show you.
+      </p>
+
+      <h2 id="keep">How long we keep it</h2>
+      <p>
+        A booking that is cancelled before check-in leaves behind only the
+        appointment record, so the slot's history stays honest. A completed
+        repair - the vehicle, the job, its inspections, parts and invoice - is
+        kept as your service history, so a later question about the work has an
+        answer in the record rather than in someone's memory. If you would
+        rather we did not keep a historical record, contact the workshop and we
+        will talk it through.
+      </p>
+
+      <h2 id="security">How we protect it</h2>
+      <ul class="check-list">
+        <li>{% include "core/_pub_icon.html" with name="check" %}<span><strong>Accounts for staff only.</strong> Every staff member signs in with their own account; there is no shared login.</span></li>
+        <li>{% include "core/_pub_icon.html" with name="check" %}<span><strong>Role-checked screens.</strong> A page outside a person's role is refused by the system, not by convention.</span></li>
+        <li>{% include "core/_pub_icon.html" with name="check" %}<span><strong>Per-job limits for technicians.</strong> A technician can act only on the jobs assigned to them.</span></li>
+        <li>{% include "core/_pub_icon.html" with name="check" %}<span><strong>Public pages show progress, not records.</strong> No staff names, internal notes or itemised costs reach the status page.</span></li>
+      </ul>
+      <p>
+        Staff sessions expire after 30 minutes of inactivity, so an unattended
+        desk does not leave the system open.
+      </p>
+
+      <h2 id="rights">Your choices</h2>
+      <p>
+        You choose how we reach you: the booking form needs a phone number or
+        an email address, not both. If you want to check or correct the details
+        we hold, contact the workshop.
+      </p>
+
+      <h2 id="questions">Questions</h2>
+      <p>
+        If anything here is unclear, <a href="{% url 'core:contact' %}">contact the
+        workshop</a> and we will walk you through it.
+      </p>
+
+      <div class="pub-page__cta">
+        <a class="btn btn--primary btn--lg" href="{% url 'core:booking' %}">Book a repair</a>
+        <a class="btn btn--ghost btn--lg" href="{% url 'core:terms' %}">Terms of service</a>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block public_footer %}
+{% include "core/_pubfoot.html" %}
+{% endblock %}

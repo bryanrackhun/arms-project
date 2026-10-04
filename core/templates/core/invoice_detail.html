@@ -41,7 +41,7 @@
   </div>
 {% else %}
   <div class="pending-banner" role="status">
-    Payment outstanding: <strong>${{ invoice.TotalAmount }}</strong>
+    Payment outstanding: <strong>{{ currency }} {{ invoice.TotalAmount }}</strong>
   </div>
 {% endif %}
 
@@ -68,43 +68,43 @@
           <th scope="row" class="cell-strong">Labour</th>
           <td>{{ repair.service.ServiceName }}</td>
           <td class="num">1</td>
-          <td class="num">${{ invoice.LabourCost }}</td>
-          <td class="num">${{ invoice.LabourCost }}</td>
+          <td class="num">{{ currency }} {{ invoice.LabourCost }}</td>
+          <td class="num">{{ currency }} {{ invoice.LabourCost }}</td>
         </tr>
         {% for item in parts_usage %}
           <tr>
             <th scope="row" class="cell-strong">{{ item.PartID.PartName }}</th>
             <td>Part fitted</td>
             <td class="num">{{ item.Qty_Used }}</td>
-            <td class="num">${{ item.Unit_Price }}</td>
-            <td class="num">${{ item.line_total }}</td>
+            <td class="num">{{ currency }} {{ item.Unit_Price }}</td>
+            <td class="num">{{ currency }} {{ item.line_total }}</td>
           </tr>
         {% empty %}
           <tr>
             <th scope="row" class="cell-strong">Parts</th>
             <td colspan="3">No parts recorded — labour-only invoice</td>
-            <td class="num">$0.00</td>
+            <td class="num">{{ currency }} 0.00</td>
           </tr>
         {% endfor %}
         <tr>
           <th scope="row" class="cell-strong">Parts subtotal</th>
           <td colspan="3"></td>
-          <td class="num">${{ invoice.PartsCost }}</td>
+          <td class="num">{{ currency }} {{ invoice.PartsCost }}</td>
         </tr>
         <tr>
           <th scope="row" class="cell-strong">Subtotal</th>
           <td colspan="3">Labour plus parts</td>
-          <td class="num">${{ invoice.subtotal }}</td>
+          <td class="num">{{ currency }} {{ invoice.subtotal }}</td>
         </tr>
         <tr>
           <th scope="row" class="cell-strong">Tax</th>
           <td colspan="3">{{ invoice.TaxRate }}% of the subtotal</td>
-          <td class="num">${{ invoice.TaxAmount }}</td>
+          <td class="num">{{ currency }} {{ invoice.TaxAmount }}</td>
         </tr>
         <tr>
           <th scope="row" class="cell-strong">Total due</th>
           <td colspan="3"></td>
-          <td class="num cell-strong">${{ invoice.TotalAmount }}</td>
+          <td class="num cell-strong">{{ currency }} {{ invoice.TotalAmount }}</td>
         </tr>
       </tbody>
     </table>
@@ -130,12 +130,16 @@
       <dd>{{ invoice.GeneratedAt }} by {{ invoice.GeneratedBy.full_name }}</dd>
     </div>
     <div class="dl-grid__row">
+      <dt>Payment method</dt>
+      <dd>{% if invoice.PaymentMethod %}{{ invoice.PaymentMethod }}{% if not invoice.is_paid %} (chosen by the customer){% endif %}{% else %}Not chosen yet{% endif %}</dd>
+    </div>
+    <div class="dl-grid__row">
       <dt>Paid at</dt>
       <dd>{{ invoice.PaidAt|default:"—" }}</dd>
     </div>
     <div class="dl-grid__row">
       <dt>Amount due</dt>
-      <dd class="dl-grid__strong">${{ invoice.TotalAmount }}</dd>
+      <dd class="dl-grid__strong">{{ currency }} {{ invoice.TotalAmount }}</dd>
     </div>
   </dl>
 
@@ -146,8 +150,9 @@
       <button class="btn btn--primary" type="submit">Mark as Paid</button>
     </form>
     <p class="note">
-      Marking the invoice Paid records the moment the customer settled the bill and
-      closes it for editing. There is no way back to Pending.
+      Only cash is accepted at the moment. Marking the invoice Paid records a cash
+      payment at the moment the customer settled the bill and closes it for editing.
+      There is no way back to Pending.
     </p>
   {% else %}
     <p class="note">

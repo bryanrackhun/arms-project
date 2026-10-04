@@ -27,19 +27,19 @@
       </div>
       <div class="dl-grid__row">
         <dt>Labour</dt>
-        <dd>${{ invoice.LabourCost }}</dd>
+        <dd>{{ currency }} {{ invoice.LabourCost }}</dd>
       </div>
       <div class="dl-grid__row">
         <dt>Parts</dt>
-        <dd>${{ invoice.PartsCost }}</dd>
+        <dd>{{ currency }} {{ invoice.PartsCost }}</dd>
       </div>
       <div class="dl-grid__row">
         <dt>Tax</dt>
-        <dd>${{ invoice.TaxAmount }} at {{ invoice.TaxRate }}%</dd>
+        <dd>{{ currency }} {{ invoice.TaxAmount }} at {{ invoice.TaxRate }}%</dd>
       </div>
       <div class="dl-grid__row">
         <dt>Total</dt>
-        <dd class="dl-grid__strong">${{ invoice.TotalAmount }}</dd>
+        <dd class="dl-grid__strong">{{ currency }} {{ invoice.TotalAmount }}</dd>
       </div>
       <div class="dl-grid__row">
         <dt>Payment</dt>
@@ -59,10 +59,10 @@
   {% elif repair.is_completed %}
     <p class="card__text">
       This job is Completed and has not been invoiced yet. The bill will be
-      labour (${{ repair.service.BaseCost }}) plus
+      labour ({{ currency }} {{ repair.service.BaseCost }}) plus
       {% if parts_usage %}
         the {{ parts_usage|length }} parts line{{ parts_usage|length|pluralize }}
-        above (${{ parts_cost }})
+        above ({{ currency }} {{ parts_cost }})
       {% else %}
         no parts — none were recorded
       {% endif %}

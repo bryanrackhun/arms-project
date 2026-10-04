@@ -139,12 +139,19 @@ class RepairWorkflowTestCase(RoleTestCase):
         self._slot_index += 1
         return slot
 
-    def book(self, *, first="Sam", last="Customer", slot=None):
-        """Book through the real service call the public form uses."""
+    def book(self, *, first="Sam", last="Customer", slot=None, plate=None):
+        """Book through the real service call the public form uses.
+
+        The booking now creates or reuses the vehicle for the plate it is given,
+        so a per-booking plate is allocated by default - exactly as each new
+        customer's own registration would differ in real life.
+        """
         return services.book_appointment(
             first, last, self.service.Service_code, self.date,
             slot or self.next_slot(), phone="0400000000",
             email="sam@example.com",
+            car_model="Toyota Corolla",
+            license_plate=plate or f"TB3BK{self.next_index():04d}",
         )
 
     def vehicle(self, *, plate="", vin="", suffix=None):
@@ -167,17 +174,36 @@ class RepairWorkflowTestCase(RoleTestCase):
         )
 
     def checked_in_appointment(self, *, slot=None, first="Sam", last="Customer",
-                               plate="", vin="", suffix=None, with_vehicle=True):
+                               plate=None, vin=None, suffix=None,
+                               with_vehicle=True):
         """Walk a booking to Checked In, optionally linking a vehicle.
 
-        ``with_vehicle=False`` gives the one state that is checked in but not
-        repair-ready, which the creation gate has to refuse.
+        The booking always resolves a vehicle from its plate now, so the default
+        path simply re-points the appointment at that same record - the no-op
+        case of matching. ``with_vehicle=False`` is the one state that is checked
+        in but not repair-ready: the link is explicitly cleared so the creation
+        gate has something to refuse.
+
+        Passing ``plate``/``vin`` builds a *separate* vehicle record and re-links
+        the appointment to it, which is how a correction at the desk looks.
         """
-        appointment = self.book(first=first, last=last, slot=slot)
+        appointment = self.book(
+            first=first, last=last, slot=slot,
+            plate=plate or f"TB3BK{self.next_index():04d}",
+        )
         services.accept_appointment(appointment.pk)
         if with_vehicle:
-            car = self.vehicle(plate=plate, vin=vin, suffix=suffix)
-            services.match_vehicle_to_appointment(appointment.pk, car.VehicleID)
+            if vin or suffix is not None:
+                # A distinct record was asked for, so link that instead.
+                car = self.vehicle(plate=plate or "", vin=vin or "", suffix=suffix)
+                services.match_vehicle_to_appointment(
+                    appointment.pk, car.VehicleID, confirm_replace=True
+                )
+        else:
+            # Clear the vehicle the booking created, leaving a checked-in
+            # appointment with nothing to work on.
+            appointment.VehicleID = None
+            appointment.save(update_fields=["VehicleID", "UpdatedAt"])
         return services.set_appointment_status(
             appointment.pk, APPOINTMENT_CHECKED_IN
         )
@@ -1867,7 +1893,11 @@ class RepairLifecycleEndToEndTests(TempMediaMixin, RepairWorkflowTestCase):
         appointment = self.book(first="Dana", last="Driver")
         services.accept_appointment(appointment.pk)
         car = self.vehicle()
-        services.match_vehicle_to_appointment(appointment.pk, car.VehicleID)
+        # The booking linked a vehicle of its own; the car arriving at the desk
+        # replaces that link, which needs the explicit confirmation.
+        services.match_vehicle_to_appointment(
+            appointment.pk, car.VehicleID, confirm_replace=True
+        )
         services.set_appointment_status(appointment.pk, APPOINTMENT_CHECKED_IN)
 
         # --- 2. The administrator opens the appointment and raises a job. ---

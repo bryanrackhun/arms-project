@@ -99,7 +99,9 @@ class AdminRenderTests(_RenderSmoke):
     def test_detail_pages_render(self):
         for url in (reverse("core:staff_edit", args=[self.staff.StaffID]),
                     reverse("core:technician_edit",
-                            args=[self.tech.TechnicianID])):
+                            args=[self.tech.TechnicianID]),
+                    reverse("core:service_edit",
+                            args=[self.service.Service_code])):
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200, url)
             self.assert_clean(response.content.decode(), url)
@@ -168,6 +170,39 @@ class LoginRenderTests(_RenderSmoke):
         # (not a per-field error), and the email must not be echoed as valid.
         self.assertIn("messages__item--error", html)
         self.assertIn("Invalid email or password.", html)
+
+
+class StaticPageRenderTests(_RenderSmoke):
+    """The public static content pages linked from the landing page.
+
+    Each page is fetched anonymously (customers have no account), checked for
+    the shared public chrome, and the unknown-page case is verified to 404 so
+    the URL space stays honest.
+    """
+
+    def test_static_pages_render_anonymously(self):
+        for name in ("about", "contact", "privacy", "terms"):
+            with self.subTest(page=name):
+                response = self.client.get(reverse(f"core:{name}"))
+                self.assertEqual(response.status_code, 200, name)
+                html = response.content.decode()
+                self.assert_clean(html, name)
+                # shared public chrome: header, footer, booking CTA
+                self.assertIn("pubbar", html)
+                self.assertIn("pubfoot", html)
+                self.assertIn(f'href="/{name}/"', html)
+
+    def test_home_links_to_static_pages(self):
+        html = self.client.get(reverse("core:home")).content.decode()
+        self.assert_clean(html, "home")
+        for name, label in (("about", "About"), ("contact", "Contact Us"),
+                            ("privacy", "Privacy Policy"), ("terms", "Terms")):
+            self.assertIn(f'href="/{name}/"', html)
+            self.assertIn(label, html)
+
+    def test_unknown_static_page_is_not_found(self):
+        response = self.client.get("/no-such-static-page/")
+        self.assertEqual(response.status_code, 404)
 
 
 class TemplateCompileTests(_RenderSmoke):

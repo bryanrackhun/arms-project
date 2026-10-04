@@ -5,6 +5,9 @@ Route protection:
       is the landing page: it sends customers to the booking form and staff to
       the login page, and forwards an already signed-in user to the dashboard.
     * ``booking`` / ``booking_success`` are public (online booking, Timebox 2).
+    * ``about`` / ``contact`` / ``privacy`` / ``terms`` are public static
+      content pages linked from the landing page's navigation and footer
+      (``static_page_view``; an unknown page name raises ``Http404``).
     * ``dashboard`` and ``profile`` require a valid session (any role).
     * ``appointments/*`` and ``vehicles/*`` require Receptionist or
       Administrator (``booking_staff``); ``vehicles/<id>/`` is also open to
@@ -26,7 +29,9 @@ Route protection:
       Technician cannot view invoices at all.
     * ``payroll/`` is Administrator-only (``payroll_manager``).
     * ``repair-status/`` is public: the customer has no account, and the booking
-      reference is the only credential that page asks for.
+      reference is the only credential that page asks for. The same holds for
+      ``repair-status/<reference>/invoice/`` and ``.../pay/``, which show a
+      Completed job's bill and record the customer's payment method.
     * Everything else is Administrator-only, enforced by the ``admin_only``
       decorator in :mod:`core.decorators`.
 """
@@ -45,6 +50,12 @@ urlpatterns = [
     path("login/", views.login_view, name="login"),
     path("logout/", views.logout_view, name="logout"),
     path("access-denied/", views.access_denied_view, name="access_denied"),
+
+    # public static content pages linked from the home page navigation
+    path("about/", views.static_page_view, {"page": "about"}, name="about"),
+    path("contact/", views.static_page_view, {"page": "contact"}, name="contact"),
+    path("privacy/", views.static_page_view, {"page": "privacy"}, name="privacy"),
+    path("terms/", views.static_page_view, {"page": "terms"}, name="terms"),
 
     # dashboard + own profile (all roles)
     path("dashboard/", views.dashboard_view, name="dashboard"),
@@ -97,6 +108,11 @@ urlpatterns = [
     # services (Administrator)
     path("services/", views.service_list_view, name="service_list"),
     path("services/new/", views.service_create_view, name="service_create"),
+    path(
+        "services/<int:service_code>/edit/",
+        views.service_edit_view,
+        name="service_edit",
+    ),
 
     # ------------------------------------------------------------------
     # Timebox 2 - appointments and vehicles
@@ -265,4 +281,16 @@ urlpatterns = [
 
     # public repair-progress lookup (no login: the customer has no account)
     path("repair-status/", views.repair_status_lookup_view, name="repair_status_lookup"),
+    # the customer's invoice and payment choice, once the job is Completed and
+    # billed (public: the booking reference is the credential)
+    path(
+        "repair-status/<str:reference_code>/invoice/",
+        views.customer_invoice_view,
+        name="customer_invoice",
+    ),
+    path(
+        "repair-status/<str:reference_code>/pay/",
+        views.customer_payment_view,
+        name="customer_payment",
+    ),
 ]

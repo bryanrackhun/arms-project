@@ -34,6 +34,7 @@ class Timebox2ScreenSmokeTests(RoleTestCase):
         return services.book_appointment(
             first, last, self.service.Service_code, self.date, self.slot,
             phone="0400000000", email="sam@example.com",
+            car_model="Toyota Corolla", license_plate="SMOKEBK",
         )
 
     def _vehicle(self, plate="SMOKE-01", vin="SMKVN000000000001"):
@@ -61,8 +62,10 @@ class Timebox2ScreenSmokeTests(RoleTestCase):
         self.login_as(self.receptionist)
         appointment = self._book()
         vehicle = self._vehicle()
+        # The booking already linked its own vehicle, so swapping in this one is
+        # a correction and has to be confirmed explicitly.
         services.match_vehicle_to_appointment(
-            appointment.AppointmentID, vehicle.VehicleID
+            appointment.AppointmentID, vehicle.VehicleID, confirm_replace=True
         )
         for url in (
             reverse("core:dashboard"),
@@ -123,6 +126,8 @@ class Timebox2ScreenSmokeTests(RoleTestCase):
                 "phone": "0400000000",
                 "email": "sam@example.com",
                 "service": self.service.Service_code,
+                "car_model": "Toyota Corolla",
+                "license_plate": "SMOKEP1",
                 "appointment_date": self.date.isoformat(),
                 "appointment_time": self.slot.strftime("%H:%M"),
             },

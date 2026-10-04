@@ -1,23 +1,52 @@
 {% extends "core/base.html" %}
-{% block title %}Add service — ARMS{% endblock %}
+{% block title %}{% if mode == 'create' %}Add service{% else %}Edit service{% endif %} — ARMS{% endblock %}
 {% block content %}
-{# Service creation form (Administrator only) #}
+{# Service create/edit form (Administrator only) - one template serves both modes #}
 <div class="page-head">
   <div class="page-head__text">
     <nav class="crumbs" aria-label="Breadcrumb">
       <ol class="crumbs__list">
         <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
         <li><a class="crumbs__link" href="{% url 'core:service_list' %}">Services</a></li>
-        <li><span class="crumbs__current" aria-current="page">Add</span></li>
+        <li><span class="crumbs__current" aria-current="page">{% if mode == 'create' %}Add{% else %}Edit{% endif %}</span></li>
       </ol>
     </nav>
-    <h1 class="page-head__title">Add service</h1>
-    <p class="page-head__sub">Add an entry to the workshop service catalogue</p>
+    <h1 class="page-head__title">
+      {% if mode == 'create' %}Add service{% else %}Edit {{ service.ServiceName }}{% endif %}
+    </h1>
+    <p class="page-head__sub">
+      {% if mode == 'create' %}
+        Add an entry to the workshop service catalogue
+      {% else %}
+        Service code {{ service.Service_code }} — change the name, base cost or estimated duration
+      {% endif %}
+    </p>
   </div>
   <div class="page-head__actions">
     <a class="btn btn--ghost" href="{% url 'core:service_list' %}">Back to list</a>
   </div>
 </div>
+
+{% if mode == 'edit' %}
+  {% comment %}
+    Usage is stated up front: these values are quoted to customers, so the
+    administrator should see the reach of an edit before making it.
+  {% endcomment %}
+  <div class="alert alert--info" role="status">
+    <span class="alert__icon" aria-hidden="true">&#8505;</span>
+    <div class="alert__body">
+      <p class="alert__text">
+        This service is used by
+        <strong>{{ appointment_count }} appointment{{ appointment_count|pluralize }}</strong>
+        and <strong>{{ technician_count }} qualified technician{{ technician_count|pluralize }}</strong>.
+      </p>
+      <p class="alert__text">
+        Existing appointments keep the price they were booked at, so changing the
+        base cost here only affects future bookings.
+      </p>
+    </div>
+  </div>
+{% endif %}
 
 <section class="card">
   <header class="card__head">
@@ -44,7 +73,9 @@
     </div>
 
     <div class="form-actions">
-      <button class="btn btn--primary" type="submit">Create service</button>
+      <button class="btn btn--primary" type="submit">
+        {% if mode == 'create' %}Create service{% else %}Save changes{% endif %}
+      </button>
       <a class="btn btn--ghost" href="{% url 'core:service_list' %}">Cancel</a>
     </div>
   </form>

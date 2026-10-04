@@ -341,7 +341,7 @@ class ServiceViewTests(_AdminLogged):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "already in use")
+        self.assertContains(response, "already exists")
         self.assertEqual(Service.objects.count(), 1)
 
     def test_create_service_negative_cost_rejected(self):
@@ -351,3 +351,128 @@ class ServiceViewTests(_AdminLogged):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Service.objects.count(), 0)
+
+    def test_service_list_links_to_edit(self):
+        service = self.make_service(name="Oil Change")
+        response = self.client.get(reverse("core:service_list"))
+        self.assertContains(
+            response, reverse("core:service_edit", args=[service.Service_code])
+        )
+
+
+class ServiceEditViewTests(_AdminLogged):
+    """Editing a catalogue service through the screen."""
+
+    def setUp(self):
+        super().setUp()
+        self.service = self.make_service(
+            name="Oil Change", cost="49.99", duration=30
+        )
+
+    def _url(self):
+        return reverse("core:service_edit", args=[self.service.Service_code])
+
+    def test_edit_form_is_prefilled(self):
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Edit service")
+        self.assertContains(response, "Oil Change")
+        self.assertContains(response, "49.99")
+
+    def test_get_does_not_change_the_row(self):
+        self.client.get(self._url())
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.ServiceName, "Oil Change")
+        self.assertEqual(float(self.service.BaseCost), 49.99)
+        self.assertEqual(self.service.Est_Duration, 30)
+
+    def test_edit_persists_all_three_fields(self):
+        response = self.client.post(
+            self._url(),
+            {
+                "service_name": "Full Oil Change",
+                "base_cost": "72.50",
+                "est_duration": "45",
+            },
+        )
+        self.assertRedirects(response, reverse("core:service_list"))
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.ServiceName, "Full Oil Change")
+        self.assertEqual(float(self.service.BaseCost), 72.50)
+        self.assertEqual(self.service.Est_Duration, 45)
+
+    def test_unchanged_name_is_not_a_duplicate_of_itself(self):
+        """Re-saving the same name must succeed: the row excludes itself."""
+        response = self.client.post(
+            self._url(),
+            {
+                "service_name": "Oil Change",
+                "base_cost": "59.99",
+                "est_duration": "30",
+            },
+        )
+        self.assertRedirects(response, reverse("core:service_list"))
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.ServiceName, "Oil Change")
+        self.assertEqual(float(self.service.BaseCost), 59.99)
+
+    def test_renaming_to_another_services_name_is_rejected(self):
+        self.make_service(name="Wheel Alignment")
+        response = self.client.post(
+            self._url(),
+            {
+                "service_name": "wheel alignment",
+                "base_cost": "89.99",
+                "est_duration": "60",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "already exists")
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.ServiceName, "Oil Change")
+
+    def test_blank_name_rejected(self):
+        response = self.client.post(
+            self._url(),
+            {"service_name": "   ", "base_cost": "10", "est_duration": "10"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.ServiceName, "Oil Change")
+
+    def test_negative_cost_rejected(self):
+        response = self.client.post(
+            self._url(),
+            {"service_name": "Oil Change", "base_cost": "-1", "est_duration": "10"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.service.refresh_from_db()
+        self.assertEqual(float(self.service.BaseCost), 49.99)
+
+    def test_zero_duration_rejected(self):
+        response = self.client.post(
+            self._url(),
+            {"service_name": "Oil Change", "base_cost": "10", "est_duration": "0"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.Est_Duration, 30)
+
+    def test_name_is_trimmed_on_save(self):
+        self.client.post(
+            self._url(),
+            {
+                "service_name": "  Brake Service  ",
+                "base_cost": "120",
+                "est_duration": "90",
+            },
+        )
+        self.service.refresh_from_db()
+        self.assertEqual(self.service.ServiceName, "Brake Service")
+
+    def test_unknown_service_redirects_with_message(self):
+        response = self.client.get(
+            reverse("core:service_edit", args=[9999]), follow=True
+        )
+        self.assertRedirects(response, reverse("core:service_list"))
+        self.assertContains(response, "does not exist")

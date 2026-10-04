@@ -51,7 +51,7 @@
               {{ part.PartName }}
               <span class="mono">#{{ part.PartID }}</span>
             </td>
-            <td class="num">${{ part.UnitPrice }}</td>
+            <td class="num">{{ currency }} {{ part.UnitPrice }}</td>
             <td class="num cell-strong">{{ part.StockQty }}</td>
             <td class="num">{{ part.ReorderThreshold }}</td>
             <td class="num">

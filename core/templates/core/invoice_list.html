@@ -14,7 +14,7 @@
     <h1 class="page-head__title">Invoices</h1>
     <p class="page-head__sub">
       {{ pending_count }} pending, {{ paid_count }} paid —
-      ${{ total_outstanding }} outstanding
+      {{ currency }} {{ total_outstanding }} outstanding
     </p>
   </div>
   <div class="page-head__actions">
@@ -127,10 +127,10 @@
             </td>
             <td class="cell-strong">{{ invoice.RepairID.customer_name }}</td>
             <td>{{ invoice.RepairID.AppointmentID.ServiceCode.ServiceName }}</td>
-            <td class="num">${{ invoice.LabourCost }}</td>
-            <td class="num">${{ invoice.PartsCost }}</td>
-            <td class="num">${{ invoice.TaxAmount }} <span class="badge badge--muted">{{ invoice.TaxRate }}%</span></td>
-            <td class="num cell-strong">${{ invoice.TotalAmount }}</td>
+            <td class="num">{{ currency }} {{ invoice.LabourCost }}</td>
+            <td class="num">{{ currency }} {{ invoice.PartsCost }}</td>
+            <td class="num">{{ currency }} {{ invoice.TaxAmount }} <span class="badge badge--muted">{{ invoice.TaxRate }}%</span></td>
+            <td class="num cell-strong">{{ currency }} {{ invoice.TotalAmount }}</td>
             <td>
               {% if invoice.is_paid %}
                 <span class="badge badge--active" title="Paid {{ invoice.PaidAt }}">Paid</span>

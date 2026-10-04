@@ -1,0 +1,82 @@
+{% extends "core/base.html" %}
+{% block title %}Pay invoice #{{ invoice.invoice_number }} — ARMS{% endblock %}
+{% block content %}
+{# Payment-method choice for the customer's own invoice. The selectable options #}
+{# come from the form, which is built from PAYMENT_METHODS - Cash only for now. #}
+{# The greyed-out methods are shown so the customer knows they are not accepted #}
+{# yet; they carry no name attribute, so they can never be submitted. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:home' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:customer_invoice' invoice.reference_code %}">Invoice #{{ invoice.invoice_number }}</a></li>
+        <li><span class="crumbs__current" aria-current="page">Payment</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Make a payment</h1>
+    <p class="page-head__sub">
+      Invoice #{{ invoice.invoice_number }} — reference <span class="mono">{{ invoice.reference_code }}</span>
+    </p>
+  </div>
+  <div class="page-head__actions">
+    <a class="btn btn--ghost" href="{% url 'core:customer_invoice' invoice.reference_code %}">Back to invoice</a>
+  </div>
+</div>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">Amount due</h2>
+    <span class="pay-total">{{ currency }} {{ invoice.total_amount }}</span>
+  </header>
+
+  <form class="form" method="post" novalidate>
+    {% csrf_token %}
+    <fieldset class="pay-options">
+      <legend class="field__label">Choose how you will pay</legend>
+
+      {% for choice in form.payment_method %}
+        <label class="pay-option" for="{{ choice.id_for_label }}">
+          {{ choice.tag }}
+          <span class="pay-option__text">
+            <span class="pay-option__name">{{ choice.choice_label }}</span>
+            <span class="pay-option__hint">Pay at the counter when you collect your vehicle</span>
+          </span>
+        </label>
+      {% endfor %}
+
+      <div class="pay-option pay-option--off">
+        <input type="radio" disabled aria-label="Card, not available">
+        <span class="pay-option__text">
+          <span class="pay-option__name">Card</span>
+          <span class="pay-option__hint">Not available at the moment</span>
+        </span>
+      </div>
+      <div class="pay-option pay-option--off">
+        <input type="radio" disabled aria-label="Online transfer, not available">
+        <span class="pay-option__text">
+          <span class="pay-option__name">Online transfer</span>
+          <span class="pay-option__hint">Not available at the moment</span>
+        </span>
+      </div>
+
+      {% if form.payment_method.errors %}
+        <ul class="errorlist field__errors">
+          {% for error in form.payment_method.errors %}<li>{{ error }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+    </fieldset>
+
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Confirm payment method</button>
+      <a class="btn btn--ghost" href="{% url 'core:customer_invoice' invoice.reference_code %}">Cancel</a>
+    </div>
+  </form>
+
+  <p class="note">
+    Only cash is accepted at the moment. Confirming does not take any money: bring
+    {{ currency }} {{ invoice.total_amount }} in cash to the counter, and the
+    receptionist will mark your invoice as paid.
+  </p>
+</section>
+{% endblock %}

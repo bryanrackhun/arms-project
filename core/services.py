@@ -48,6 +48,8 @@ from .models import (
     CUSTOMER_STAGE_JOB_ASSIGNED,
     CUSTOMER_STAGES,
     MAX_INSPECTION_IMAGES,
+    PAYMENT_METHOD_CASH,
+    PAYMENT_METHODS,
     PAYMENT_PAID,
     PAYMENT_PENDING,
     REFERENCE_CODE_MAX_ATTEMPTS,
@@ -61,6 +63,7 @@ from .models import (
     TAX_RATE_MAX,
     TAX_RATE_MIN,
     TERMINAL_APPOINTMENT_STATUSES,
+    CURRENCY_CODE,
     Appointment,
     Inspection,
     Invoice,
@@ -586,6 +589,91 @@ def list_services() -> list[Service]:
     return list(Service.objects.all())
 
 
+def _validate_service_fields(
+    service_name: str,
+    base_cost,
+    est_duration,
+    exclude_service_code: int | None = None,
+) -> tuple[str, Decimal, int]:
+    """Validate a catalogue service's editable fields.
+
+    Shared by create and update so the two cannot drift apart. ``ServiceName``
+    is unique in the schema, so the duplicate check must ignore the row being
+    edited - otherwise saving an unchanged name over itself would be rejected.
+    """
+    name = (service_name or "").strip()
+    if not name:
+        raise ValidationError("Service name is required.")
+    if len(name) > 40:
+        raise ValidationError("The service name must be 40 characters or fewer.")
+
+    duplicates = Service.objects.filter(ServiceName__iexact=name)
+    if exclude_service_code is not None:
+        duplicates = duplicates.exclude(pk=exclude_service_code)
+    if duplicates.exists():
+        raise DuplicateError(f"A service named '{name}' already exists.")
+
+    # BaseCost has a >= 0 check constraint and Est_Duration a >= 1 one, mirrored
+    # here so the user sees a sentence rather than an IntegrityError.
+    cost = _money(_validate_non_negative(base_cost, "The base cost"))
+    duration = _validate_non_negative(
+        est_duration, "The estimated duration", integer=True
+    )
+    if duration < 1:
+        raise ValidationError("The estimated duration must be at least 1 minute.")
+    return name, cost, duration
+
+
+def create_service(
+    service_name: str, base_cost, est_duration
+) -> Service:
+    """Add a service to the workshop catalogue ( 'create a service').
+
+    Kept here rather than in the view so the name-uniqueness rule lives with the
+    data, exactly as it does for service bays and technicians.
+    """
+    name, cost, duration = _validate_service_fields(
+        service_name, base_cost, est_duration
+    )
+    try:
+        with transaction.atomic():
+            return Service.objects.create(
+                ServiceName=name, BaseCost=cost, Est_Duration=duration
+            )
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Service creation failed (ServiceName=%s).", service_name)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def update_service(
+    service_code: int, service_name: str, base_cost, est_duration
+) -> Service:
+    """Edit a catalogue service's name, cost and duration ( 'update a service').
+
+    All three fields are editable here, unlike a service bay whose status is
+    derived. An existing appointment keeps the price it was booked at - it
+    stores its own ``TotalAmount`` - so a later price change is not retroactive.
+    """
+    service = get_service(service_code)
+    name, cost, duration = _validate_service_fields(
+        service_name, base_cost, est_duration, exclude_service_code=service_code
+    )
+    service.ServiceName = name
+    service.BaseCost = cost
+    service.Est_Duration = duration
+    try:
+        with transaction.atomic():
+            service.save(update_fields=["ServiceName", "BaseCost", "Est_Duration"])
+            return service
+    except ServiceError:
+        raise
+    except Exception:
+        logger.exception("Service update failed (Service_code=%s).", service_code)
+        raise ServiceError("Something went wrong, please try again.")
+
+
 
 
 # ===========================================================================
@@ -692,6 +780,45 @@ def get_service(service_code: int) -> Service:
 
 
 
+def _validate_booking_vehicle(car_model: str, license_plate: str) -> tuple[str, str]:
+    """Booking-time vehicle details: both the model and the plate are required.
+
+    The public form now asks for them, so a booking can create or reuse a real
+    :class:`Vehicle` row rather than leaving ``VehicleID`` empty for reception to
+    fill in later. The plate is pattern-checked first and then normalised, so
+    ``ab12 cde`` and ``AB12-CDE`` both resolve to the same stored vehicle.
+    """
+    car_model = (car_model or "").strip()
+    license_plate = (license_plate or "").strip().upper()
+    if not car_model:
+        raise ValidationError("The car model is required.")
+    if len(car_model) > 40:
+        raise ValidationError("The car model must be 40 characters or fewer.")
+    if not license_plate:
+        raise ValidationError("The registration number is required.")
+    if not LICENSE_PLATE_PATTERN.match(license_plate):
+        raise ValidationError(
+            "Enter a valid registration number (2-15 letters, digits, spaces "
+            "or hyphens)."
+        )
+    return car_model, normalise_license_plate(license_plate)
+
+
+def _booking_vehicle(car_model: str, license_plate: str) -> Vehicle:
+    """Find the vehicle with this plate, or create it with the details given.
+
+    A returning customer's existing record is *reused exactly as it is*: its
+    make, year, colour and photo were captured at a previous check-in and a
+    booking typed on a phone must not overwrite them with blanks. Only a plate
+    that resolves to nothing gets a new row, and that row carries just the plate
+    and the model - the two facts the booking actually collected.
+    """
+    existing = Vehicle.objects.filter(LicensePlate=license_plate).first()
+    if existing is not None:
+        return existing
+    return Vehicle.objects.create(LicensePlate=license_plate, Model=car_model)
+
+
 def book_appointment(
     first_name: str,
     last_name: str,
@@ -701,13 +828,25 @@ def book_appointment(
     phone: str = "",
     email: str = "",
     notes: str = "",
+    car_model: str = "",
+    license_plate: str = "",
 ) -> Appointment:
-    """Create a booking request with ``VehicleID`` deliberately left unset.
+    """Create a booking request, linked to the customer's vehicle.
 
-    A booking captures who the customer is, which service they want and when
-    they would like to come in - but never any vehicle data, because customers
-    rarely have their VIN to hand when booking online. The vehicle is recorded
-    and linked later, at check-in.
+    The booking records who the customer is, which service they want, when they
+    would like to come in, and - now that the public form asks for them - the
+    car's model and registration number. The vehicle row is found or created in
+    the same transaction as the appointment, and ``VehicleID`` is set to it, so
+    a booking can no longer exist without a car attached.
+
+    Reuse rules for the vehicle:
+
+    * the plate is normalised first, so ``ab12 cde`` matches a stored
+      ``AB12CDE`` instead of creating a second record;
+    * an existing vehicle is returned untouched - booking never overwrites the
+      fuller details recorded at check-in;
+    * otherwise a new row is created holding only ``LicensePlate`` and
+      ``Model``, because those are the only two facts this entry point has.
 
     The same entry point serves both routes into the diary: a customer booking
     online and a receptionist taking the request over the counter. Either way
@@ -726,10 +865,17 @@ def book_appointment(
     appointment_date, appointment_time = _validate_slot(
         appointment_date, appointment_time
     )
+    car_model, license_plate = _validate_booking_vehicle(car_model, license_plate)
     notes = (notes or "").strip()
 
     try:
         with transaction.atomic():
+            # The vehicle is resolved first and inside the same transaction as
+            # the appointment it belongs to. Creating a vehicle and then failing
+            # to insert the appointment would otherwise leave a car on file that
+            # nobody ever booked, so both writes commit together or not at all.
+            vehicle = _booking_vehicle(car_model, license_plate)
+
             for _attempt in range(REFERENCE_CODE_MAX_ATTEMPTS):
                 reference_code = generate_reference_code()
                 try:
@@ -743,7 +889,7 @@ def book_appointment(
                             CustomerLastName=last_name,
                             CustomerPhone=phone,
                             CustomerEmail=email,
-                            VehicleID=None,  # explicitly unset at booking time
+                            VehicleID=vehicle,  # found or created above
                             ServiceCode=service,
                             AppointmentDate=appointment_date,
                             AppointmentTime=appointment_time,
@@ -859,6 +1005,8 @@ def update_appointment(
     phone: str | None = None,
     email: str | None = None,
     notes: str | None = None,
+    car_model: str | None = None,
+    license_plate: str | None = None,
 ) -> Appointment:
     """Update an appointment's booking details ( 'update an appointment').
 
@@ -866,6 +1014,11 @@ def update_appointment(
     value. A terminal appointment (cancelled / no-show) is a finished record
     and may not be edited, and any slot change is re-validated so the booking
     cannot be moved into the past or onto an already-taken slot.
+
+    When the car model or plate is edited, the same find-or-create rule the
+    original booking used is applied again: the plate is normalised, a matching
+    vehicle is reused untouched, and anything new is created - then the
+    appointment is re-pointed at it.
     """
     appointment = get_appointment(appointment_id)
     if appointment.Status in TERMINAL_APPOINTMENT_STATUSES:
@@ -901,6 +1054,18 @@ def update_appointment(
 
     if notes is not None:
         appointment.Notes = notes.strip()
+
+    if car_model is not None or license_plate is not None:
+        # Fall back to the linked vehicle's own values for whichever half of the
+        # pair the caller left out, so editing only the plate keeps the model.
+        linked = appointment.VehicleID
+        car_model, license_plate = _validate_booking_vehicle(
+            car_model if car_model is not None
+            else (linked.Model if linked else ""),
+            license_plate if license_plate is not None
+            else (linked.LicensePlate if linked else ""),
+        )
+        appointment.VehicleID = _booking_vehicle(car_model, license_plate)
 
     try:
         with transaction.atomic():
@@ -1032,6 +1197,22 @@ def _validate_vin(vin: str, exclude_vehicle_id: int | None = None) -> str | None
     return vin
 
 
+def normalise_license_plate(plate: str) -> str:
+    """Canonical form of a registration number: uppercase, no spaces or hyphens.
+
+    Customers type the same plate many ways - ``ab12 cde``, ``AB12-CDE``,
+    ``ab12cde`` - and each must resolve to the *one* vehicle already on file
+    rather than creating a near-duplicate. Stripping the separators and folding
+    to uppercase gives every spelling a single canonical key, which is what both
+    booking and check-in compare against.
+
+    Note that this deliberately returns a value that no longer matches
+    :data:`LICENSE_PLATE_PATTERN` when the typed plate contained separators, so
+    it is applied *after* the pattern check, never before.
+    """
+    return re.sub(r"[\s\-]+", "", (plate or "").strip().upper())
+
+
 def _validate_license_plate(
     plate: str, exclude_vehicle_id: int | None = None
 ) -> str | None:
@@ -1044,6 +1225,7 @@ def _validate_license_plate(
             "Enter a valid registration number (2-15 letters, digits, spaces "
             "or hyphens)."
         )
+    plate = normalise_license_plate(plate)
     existing = Vehicle.objects.filter(LicensePlate=plate)
     if exclude_vehicle_id is not None:
         existing = existing.exclude(pk=exclude_vehicle_id)
@@ -1236,9 +1418,13 @@ def find_vehicle(vin: str = "", license_plate: str = "") -> Vehicle | None:
 
     This is the lookup half of check-in: a match by *either* identifier reuses
     the existing record so no duplicate vehicle is ever created.
+
+    The plate is normalised before the lookup, so a receptionist typing
+    ``ab12 cde`` finds the ``AB12CDE`` row the customer's booking created rather
+    than recording the same car a second time.
     """
     vin = (vin or "").strip().upper()
-    license_plate = (license_plate or "").strip().upper()
+    license_plate = normalise_license_plate(license_plate)
     if not vin and not license_plate:
         return None
     condition = Q()
@@ -2898,6 +3084,9 @@ def mark_invoice_paid(invoice_id: int, staff: Staff) -> Invoice:
     rather than quietly ignored, so ``PaidAt`` can never be moved to a later date
     and rewrite when the customer actually paid. That refusal is also what makes a
     Paid invoice final (T4-INV-27): there is no code path back to Pending.
+
+    Cash is the only method the counter takes, so settling records Cash, whether
+    or not the customer chose it online first.
     """
     if staff is None or staff.role_name not in INVOICE_STAFF_ROLES:
         raise AuthorizationError(
@@ -2916,7 +3105,8 @@ def mark_invoice_paid(invoice_id: int, staff: Staff) -> Invoice:
         with transaction.atomic():
             invoice.PaymentStatus = PAYMENT_PAID
             invoice.PaidAt = dj_timezone.now()
-            invoice.save(update_fields=["PaymentStatus", "PaidAt"])
+            invoice.PaymentMethod = PAYMENT_METHOD_CASH
+            invoice.save(update_fields=["PaymentStatus", "PaidAt", "PaymentMethod"])
             return invoice
     except ServiceError:
         raise
@@ -3159,8 +3349,9 @@ def calculate_payroll(
         technician = getattr(account, "technician_record", None)
         # Hourly_rate is a NOT NULL column with a positive check, so the rate can
         # only be absent when the record itself has not been created. Reported
-        # rather than paid zero, because silently showing $0.00 would hide a data
-        # gap the administrator needs to fix - the rate is missing, not the work.
+        # rather than paid zero, because silently showing MMK 0.00 would hide a
+        # data gap the administrator needs to fix - the rate is missing, not the
+        # work.
         if technician is None or technician.Hourly_rate is None:
             excluded.append(
                 {
@@ -3390,9 +3581,125 @@ def get_customer_repair_status(reference_code: str) -> dict:
         "has_invoice": invoice is not None,
         "invoice_payment_status": invoice.PaymentStatus if invoice else "",
         "invoice_is_paid": invoice.is_paid if invoice else False,
+        "invoice_payment_method": invoice.PaymentMethod if invoice else "",
         "vehicle_license_plate": (
             appointment.VehicleID.LicensePlate
             if repair is not None and appointment.VehicleID_id is not None
             else ""
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Customer invoice and payment (public, by booking reference)
+# ---------------------------------------------------------------------------
+#: One message for every reason a customer cannot see an invoice - unknown
+#: reference, cancelled booking, job not finished, bill not raised yet - so the
+#: invoice page cannot be used to probe which references exist or how far a
+#: stranger's repair has got.
+CUSTOMER_INVOICE_NOT_FOUND = (
+    "There is no invoice to show for that reference yet. Your invoice appears "
+    "here once the repair is complete and the workshop has issued the bill."
+)
+
+
+def _customer_invoice_for_reference(reference_code: str) -> Invoice:
+    """Return the invoice a booking reference may see, or raise NotFoundError.
+
+    Only a Completed job's invoice is shown. ``generate_invoice`` already refuses
+    to bill unfinished work, so the status filter restates that rule here rather
+    than relying on it from a distance.
+    """
+    try:
+        appointment = get_appointment_by_reference(reference_code)
+    except NotFoundError as exc:
+        raise NotFoundError(CUSTOMER_INVOICE_NOT_FOUND) from exc
+    if appointment.is_cancelled:
+        raise NotFoundError(CUSTOMER_INVOICE_NOT_FOUND)
+
+    invoice = (
+        Invoice.objects.select_related(*_INVOICE_SELECT_RELATED)
+        .filter(RepairID__AppointmentID=appointment, RepairID__Status=REPAIR_COMPLETED)
+        .first()
+    )
+    if invoice is None:
+        raise NotFoundError(CUSTOMER_INVOICE_NOT_FOUND)
+    return invoice
+
+
+def get_customer_invoice(reference_code: str) -> dict:
+    """Return the itemised bill for a booking reference, for the customer.
+
+    The same stored amounts the counter's invoice page shows, so the customer
+    and the receptionist always read the same bill. Staff names - who raised the
+    bill, who fitted the parts - are left out: anyone holding the reference can
+    open this page.
+    """
+    invoice = _customer_invoice_for_reference(reference_code)
+    repair = invoice.RepairID
+    appointment = repair.AppointmentID
+    usage = (
+        PartsUsage.objects.filter(RepairID=repair)
+        .select_related("PartID")
+        .order_by("UsedAt", "UsageID")
+    )
+    return {
+        "reference_code": appointment.ReferenceCode,
+        "customer_name": appointment.customer_name,
+        "invoice_number": invoice.pk,
+        "service_name": appointment.ServiceCode.ServiceName,
+        "vehicle_license_plate": (
+            appointment.VehicleID.LicensePlate if appointment.VehicleID_id else ""
+        ),
+        "generated_at": invoice.GeneratedAt,
+        "labour_cost": invoice.LabourCost,
+        "parts_lines": [
+            {
+                "name": line.PartID.PartName,
+                "qty": line.Qty_Used,
+                "unit_price": line.Unit_Price,
+                "line_total": line.line_total,
+            }
+            for line in usage
+        ],
+        "parts_cost": invoice.PartsCost,
+        "subtotal": invoice.subtotal,
+        "tax_rate": invoice.TaxRate,
+        "tax_amount": invoice.TaxAmount,
+        "total_amount": invoice.TotalAmount,
+        "payment_status": invoice.PaymentStatus,
+        "is_paid": invoice.is_paid,
+        "paid_at": invoice.PaidAt,
+        "payment_method": invoice.PaymentMethod,
+    }
+
+
+def choose_customer_payment_method(reference_code: str, method: str) -> dict:
+    """Record how the customer will pay an outstanding invoice.
+
+    Cash is the only method accepted for now, and cash changes hands at the
+    counter, so choosing it does *not* settle the bill: the invoice stays Pending
+    until a receptionist takes the money and marks it Paid. Letting anyone who
+    holds a reference mark their own bill Paid would make the payment status
+    meaningless.
+
+    The method is checked against :data:`PAYMENT_METHODS` here as well as in the
+    form, so a hand-crafted request cannot record a method the workshop does not
+    take. A Paid invoice is final (T4-INV-27) and is refused.
+    """
+    allowed = {value for value, _label in PAYMENT_METHODS}
+    if method not in allowed:
+        accepted = ", ".join(label for _value, label in PAYMENT_METHODS)
+        raise ValidationError(
+            f"That payment method is not available. We currently accept: {accepted}."
+        )
+
+    invoice = _customer_invoice_for_reference(reference_code)
+    # Conditional update: if the counter marks the bill Paid between the read
+    # above and this write, nothing is changed and the customer is told.
+    updated = Invoice.objects.filter(
+        pk=invoice.pk, PaymentStatus=PAYMENT_PENDING
+    ).update(PaymentMethod=method)
+    if not updated:
+        raise ValidationError("This invoice has already been paid.")
+    return get_customer_invoice(reference_code)

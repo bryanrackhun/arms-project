@@ -247,6 +247,91 @@ class ServiceModuleTests(RoleTestCase):
             names, ["Administrator", "Receptionist", "Technician"]
         )
 
+    def test_create_service_persists(self):
+        service = services.create_service("Oil Change", "49.99", 30)
+        self.assertEqual(service.ServiceName, "Oil Change")
+        self.assertEqual(float(service.BaseCost), 49.99)
+        self.assertEqual(service.Est_Duration, 30)
+
+    def test_create_service_trims_the_name(self):
+        service = services.create_service("  Oil Change  ", "10", 15)
+        self.assertEqual(service.ServiceName, "Oil Change")
+
+    def test_create_service_duplicate_name_rejected(self):
+        self.make_service(name="Oil Change")
+        with self.assertRaises(DuplicateError):
+            services.create_service("oil change", "10", 15)
+
+    def test_update_service_changes_every_field(self):
+        service = self.make_service(name="Oil Change", cost="49.99", duration=30)
+        updated = services.update_service(
+            service.Service_code, "Full Oil Change", "72.50", 45
+        )
+        self.assertEqual(updated.ServiceName, "Full Oil Change")
+        self.assertEqual(float(updated.BaseCost), 72.50)
+        self.assertEqual(updated.Est_Duration, 45)
+        service.refresh_from_db()
+        self.assertEqual(service.ServiceName, "Full Oil Change")
+
+    def test_update_service_may_keep_its_own_name(self):
+        service = self.make_service(name="Oil Change")
+        updated = services.update_service(
+            service.Service_code, "Oil Change", "55.00", 30
+        )
+        self.assertEqual(updated.ServiceName, "Oil Change")
+        self.assertEqual(float(updated.BaseCost), 55.00)
+
+    def test_update_service_rejects_another_services_name(self):
+        service = self.make_service(name="Oil Change")
+        self.make_service(name="Wheel Alignment")
+        with self.assertRaises(DuplicateError):
+            services.update_service(
+                service.Service_code, "Wheel Alignment", "10", 10
+            )
+        service.refresh_from_db()
+        self.assertEqual(service.ServiceName, "Oil Change")
+
+    def test_update_service_unknown_code_raises_not_found(self):
+        with self.assertRaises(NotFoundError):
+            services.update_service(9999, "Ghost", "10", 10)
+
+    def test_update_service_blank_name_rejected(self):
+        service = self.make_service(name="Oil Change")
+        with self.assertRaises(ValidationError):
+            services.update_service(service.Service_code, "   ", "10", 10)
+        service.refresh_from_db()
+        self.assertEqual(service.ServiceName, "Oil Change")
+
+    def test_update_service_negative_cost_rejected(self):
+        service = self.make_service(name="Oil Change", cost="49.99")
+        with self.assertRaises(ValidationError):
+            services.update_service(service.Service_code, "Oil Change", "-1", 10)
+        service.refresh_from_db()
+        self.assertEqual(float(service.BaseCost), 49.99)
+
+    def test_update_service_zero_duration_rejected(self):
+        service = self.make_service(name="Oil Change", duration=30)
+        with self.assertRaises(ValidationError):
+            services.update_service(service.Service_code, "Oil Change", "10", 0)
+        service.refresh_from_db()
+        self.assertEqual(service.Est_Duration, 30)
+
+    def test_update_service_name_over_40_chars_rejected(self):
+        service = self.make_service(name="Oil Change")
+        with self.assertRaises(ValidationError):
+            services.update_service(service.Service_code, "x" * 41, "10", 10)
+        service.refresh_from_db()
+        self.assertEqual(service.ServiceName, "Oil Change")
+
+    def test_update_service_rounds_the_cost_to_two_places(self):
+        service = self.make_service(name="Oil Change")
+        updated = services.update_service(
+            service.Service_code, "Oil Change", "10.005", 10
+        )
+        # _money() rounds half-up, so the stored value is a clean 2dp figure
+        # rather than the float-shaped 10.004999999999999.
+        self.assertEqual(str(updated.BaseCost), "10.01")
+
 
 class ValidationTests(RoleTestCase):
     """Validation rules enforced in the service layer."""

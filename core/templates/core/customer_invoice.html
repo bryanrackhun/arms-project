@@ -1,0 +1,173 @@
+{% extends "core/base.html" %}
+{% block title %}{% if invoice %}Invoice #{{ invoice.invoice_number }}{% else %}Invoice{% endif %} — ARMS{% endblock %}
+{% block content %}
+{# The customer's own bill, opened from the public repair-status result. Public: #}
+{# the booking reference is the only credential, so the page carries the stored #}
+{# amounts but no staff names - not who raised the bill or who fitted the parts. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:home' %}">Home</a></li>
+        <li><a class="crumbs__link" href="{% url 'core:repair_status_lookup' %}">Repair status</a></li>
+        <li><span class="crumbs__current" aria-current="page">Invoice</span></li>
+      </ol>
+    </nav>
+    {% if invoice %}
+      <h1 class="page-head__title">Invoice #{{ invoice.invoice_number }}</h1>
+      <p class="page-head__sub">
+        {{ invoice.service_name }} — reference <span class="mono">{{ invoice.reference_code }}</span>
+        {% if invoice.is_paid %}
+          <span class="badge badge--active">Paid</span>
+        {% else %}
+          <span class="badge badge--pending">{{ invoice.payment_status }}</span>
+        {% endif %}
+      </p>
+    {% else %}
+      <h1 class="page-head__title">Invoice</h1>
+    {% endif %}
+  </div>
+  <div class="page-head__actions">
+    {% if invoice %}
+      <a class="btn btn--ghost" href="{% url 'core:repair_status_lookup' %}?ref={{ invoice.reference_code|urlencode }}">Back to repair status</a>
+    {% else %}
+      <a class="btn btn--ghost" href="{% url 'core:repair_status_lookup' %}">Check your repair status</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if not invoice %}
+  <div class="alert alert--error" role="alert">
+    <span class="alert__icon" aria-hidden="true">&#10005;</span>
+    <div class="alert__body">
+      <p class="alert__text">{{ error }}</p>
+      <p class="alert__text">
+        If you think this is wrong, please contact the workshop and quote your
+        booking reference.
+      </p>
+    </div>
+  </div>
+{% else %}
+  {% if invoice.is_paid %}
+    <div class="alert alert--info" role="status">
+      <span class="alert__icon" aria-hidden="true">&#10003;</span>
+      <div class="alert__body">
+        <p class="alert__text">
+          Thank you — paid in {{ invoice.payment_method|default:"cash"|lower }} on
+          {{ invoice.paid_at|date:"j M Y, H:i" }}. Your vehicle is ready for collection.
+        </p>
+      </div>
+    </div>
+  {% else %}
+    <div class="pending-banner" role="status">
+      <span>
+        Amount due: <strong>{{ currency }} {{ invoice.total_amount }}</strong>
+        {% if invoice.payment_method %}
+          — you chose to pay in {{ invoice.payment_method|lower }} at the counter.
+        {% endif %}
+      </span>
+      <a class="btn btn--primary" href="{% url 'core:customer_payment' invoice.reference_code %}">
+        {% if invoice.payment_method %}Change payment method{% else %}Make payment{% endif %}
+      </a>
+    </div>
+  {% endif %}
+
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Itemised bill</h2>
+      <span class="card__hint">Issued {{ invoice.generated_at }}</span>
+    </header>
+
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">The labour, parts, tax and total of your invoice</caption>
+        <thead>
+          <tr>
+            <th scope="col">Line</th>
+            <th scope="col">Detail</th>
+            <th scope="col" class="num">Qty</th>
+            <th scope="col" class="num">Unit</th>
+            <th scope="col" class="num">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row" class="cell-strong">Labour</th>
+            <td>{{ invoice.service_name }}</td>
+            <td class="num">1</td>
+            <td class="num">{{ currency }} {{ invoice.labour_cost }}</td>
+            <td class="num">{{ currency }} {{ invoice.labour_cost }}</td>
+          </tr>
+          {% for line in invoice.parts_lines %}
+            <tr>
+              <th scope="row" class="cell-strong">{{ line.name }}</th>
+              <td>Part fitted</td>
+              <td class="num">{{ line.qty }}</td>
+              <td class="num">{{ currency }} {{ line.unit_price }}</td>
+              <td class="num">{{ currency }} {{ line.line_total }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <th scope="row" class="cell-strong">Parts</th>
+              <td colspan="3">No parts were needed for this job</td>
+              <td class="num">{{ currency }} 0.00</td>
+            </tr>
+          {% endfor %}
+          <tr>
+            <th scope="row" class="cell-strong">Subtotal</th>
+            <td colspan="3">Labour plus parts</td>
+            <td class="num">{{ currency }} {{ invoice.subtotal }}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="cell-strong">Tax</th>
+            <td colspan="3">{{ invoice.tax_rate }}% of the subtotal</td>
+            <td class="num">{{ currency }} {{ invoice.tax_amount }}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="cell-strong">Total</th>
+            <td colspan="3"></td>
+            <td class="num cell-strong">{{ currency }} {{ invoice.total_amount }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Payment</h2>
+      {% if invoice.is_paid %}
+        <span class="badge badge--active">Settled</span>
+      {% else %}
+        <span class="badge badge--pending">Awaiting payment</span>
+      {% endif %}
+    </header>
+    <dl class="dl-grid">
+      <div class="dl-grid__row">
+        <dt>Customer</dt>
+        <dd>{{ invoice.customer_name }}</dd>
+      </div>
+      {% if invoice.vehicle_license_plate %}
+        <div class="dl-grid__row">
+          <dt>Vehicle</dt>
+          <dd>{{ invoice.vehicle_license_plate }}</dd>
+        </div>
+      {% endif %}
+      <div class="dl-grid__row">
+        <dt>Payment method</dt>
+        <dd>{% if invoice.payment_method %}{{ invoice.payment_method }}{% else %}Not chosen yet{% endif %}</dd>
+      </div>
+      <div class="dl-grid__row">
+        <dt>{% if invoice.is_paid %}Amount paid{% else %}Amount due{% endif %}</dt>
+        <dd class="dl-grid__strong">{{ currency }} {{ invoice.total_amount }}</dd>
+      </div>
+    </dl>
+    {% if not invoice.is_paid %}
+      <p class="note">
+        We accept cash only at the moment. Your invoice is marked paid once the
+        receptionist has taken your payment at the counter.
+      </p>
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}

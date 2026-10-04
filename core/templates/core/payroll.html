@@ -17,7 +17,7 @@
       {% if report %}
         {{ report.technician_count }} technician{{ report.technician_count|pluralize }} —
         {{ report.job_count }} completed job{{ report.job_count|pluralize }} —
-        ${{ report.grand_total }} total
+        {{ currency }} {{ report.grand_total }} total
       {% else %}
         Calculate pay for the repair jobs completed in a chosen date range
       {% endif %}
@@ -101,7 +101,7 @@
         <div class="stat__meta">in the date range</div>
       </article>
       <article class="stat">
-        <div class="stat__num">${{ report.grand_total }}</div>
+        <div class="stat__num">{{ currency }} {{ report.grand_total }}</div>
         <div class="stat__lbl">Grand total</div>
         <div class="stat__meta">to be paid</div>
       </article>
@@ -122,9 +122,9 @@
       <header class="card__head">
         <h2 class="card__title">{{ entry.technician_name }}</h2>
         <span class="card__hint">
-          ${{ entry.hourly_rate }}/hr —
+          {{ currency }} {{ entry.hourly_rate }}/hr —
           {{ entry.job_count }} job{{ entry.job_count|pluralize }} —
-          <strong>${{ entry.total }}</strong>
+          <strong>{{ currency }} {{ entry.total }}</strong>
         </span>
       </header>
 
@@ -155,13 +155,13 @@
                   <td class="cell-strong">{{ line.customer_name }}</td>
                   <td>{{ line.service_name }}</td>
                   <td class="num">{{ line.estimated_hours }}</td>
-                  <td class="num cell-strong">${{ line.amount }}</td>
+                  <td class="num cell-strong">{{ currency }} {{ line.amount }}</td>
                   <td>{{ line.completed_at }}</td>
                 </tr>
               {% endfor %}
               <tr>
                 <th scope="row" class="cell-strong" colspan="4">Total for {{ entry.technician_name }}</th>
-                <td class="num cell-strong">${{ entry.total }}</td>
+                <td class="num cell-strong">{{ currency }} {{ entry.total }}</td>
                 <td></td>
               </tr>
             </tbody>

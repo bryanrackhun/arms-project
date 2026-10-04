@@ -20,6 +20,7 @@ logged server-side, so a stack trace is never rendered into a page.
 
 from django.contrib import messages
 from django.db.models import Count, Q
+from django.http import Http404
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone as dj_timezone
@@ -46,6 +47,7 @@ from .forms import (
     AppointmentStatusForm,
     BookingForm,
     CancelAppointmentForm,
+    CustomerPaymentForm,
     InspectionForm,
     InvoiceFilterForm,
     InvoiceGenerateForm,
@@ -78,6 +80,7 @@ from .models import (
     APPOINTMENT_TRANSITIONS,
     BAY_AVAILABLE,
     BAY_OCCUPIED,
+    CURRENCY_CODE,
     MAX_INSPECTION_IMAGES,
     PAYMENT_PAID,
     PAYMENT_PENDING,
@@ -126,9 +129,36 @@ def home_view(request):
     visitor to the staff login by default - which hides the booking service
     entirely - this page offers both. Signed-in staff go straight to the
     dashboard, because the landing page would only be a detour for them.
+
+    The landing page also carries the repair-progress lookup, so a returning
+    customer who holds a booking reference does not have to find a second screen.
+    It runs the same service call as the dedicated status page and renders the
+    same shared partial, so the two can never disagree. Nothing extra is exposed
+    here: the lookup asks only for the reference, exactly as the dedicated page
+    does.
     """
     if request.session.get(services.SESSION_KEY_STAFF_ID):
         return redirect("core:dashboard")
+
+    status_form = RepairStatusLookupForm()
+    status = None
+
+    # A booking confirmation can hand the reference over in the query string;
+    # when it does, the lookup runs straight away rather than making the
+    # customer retype a code they have just been given.
+    preset = request.GET.get("ref", "").strip()
+    if preset and request.method == "GET":
+        status_form = RepairStatusLookupForm(initial={"reference_code": preset})
+        status = services.get_customer_repair_status(preset)
+
+    if request.method == "POST":
+        status_form = RepairStatusLookupForm(request.POST)
+        if status_form.is_valid():
+            status = services.get_customer_repair_status(
+                status_form.cleaned_data["reference_code"]
+            )
+        # An invalid form falls through with status None: the inline field error
+        # (empty reference) is the explanation, and no result block is rendered.
 
     return render(
         request,
@@ -139,8 +169,45 @@ def home_view(request):
             # before opening the booking form.
             "services": Service.objects.order_by("ServiceName"),
             "service_total": Service.objects.count(),
+            # "Popular" is measured by bookings; ties (and a new workshop with
+            # no bookings yet) fall back to alphabetical order.
+            "popular_services": Service.objects.annotate(
+                booking_count=Count("appointments")
+            ).order_by("-booking_count", "ServiceName")[:4],
+            "status_form": status_form,
+            "status": status,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Public static content pages (about / contact / privacy / terms)
+# ---------------------------------------------------------------------------
+#: Static pages served from the public site. Each entry maps a URL name to its
+#: template, so one view handles every page and a new page is a two-line change
+#: (a template plus an entry here and in ``urls.py``).
+STATIC_PAGES = {
+    "about": "core/about.html",
+    "contact": "core/contact.html",
+    "privacy": "core/privacy.html",
+    "terms": "core/terms.html",
+}
+
+
+def static_page_view(request, page):
+    """Render one of the public static content pages.
+
+    The pages carry no database content - they are workshop copy - so a single
+    view with a small name-to-template map is enough. An unknown ``page``
+    resolves to no template and raises ``Http404`` rather than guessing, so the
+    URL space stays honest. Signed-in staff can still read these pages; unlike
+    the landing page they are not a detour, because they hold no dashboard
+    content.
+    """
+    template = STATIC_PAGES.get(page)
+    if template is None:
+        raise Http404("No such page")
+    return render(request, template, {"identity": None})
 
 
 # ---------------------------------------------------------------------------
@@ -723,13 +790,17 @@ def service_create_view(request):
         form = ServiceForm(request.POST)
         if form.is_valid():
             try:
-                service = Service.objects.create(
-                    ServiceName=form.cleaned_data["service_name"],
-                    BaseCost=form.cleaned_data["base_cost"],
-                    Est_Duration=form.cleaned_data["est_duration"],
+                service = services.create_service(
+                    service_name=form.cleaned_data["service_name"],
+                    base_cost=form.cleaned_data["base_cost"],
+                    est_duration=form.cleaned_data["est_duration"],
                 )
-            except Exception:
-                messages.error(request, "Something went wrong, please try again.")
+            except DuplicateError as error:
+                form.add_error("service_name", str(error))
+            except ValidationError as error:
+                _service_error(request, error)
+            except ServiceError as error:
+                _service_error(request, error)
             else:
                 messages.success(request, f"Service '{service.ServiceName}' created.")
                 return redirect("core:service_list")
@@ -737,6 +808,70 @@ def service_create_view(request):
         request,
         "core/service_form.html",
         {"identity": _identity(request), "form": form, "mode": "create"},
+    )
+
+
+@require_auth
+@admin_only
+def service_edit_view(request, service_code: int):
+    """Edit a catalogue service's name, base cost and estimated duration.
+
+    The service is fetched up front so an unknown code becomes a message back on
+    the list rather than a 404 on a screen the administrator reached from that
+    same list. Only an Administrator may get here - the same guard as every
+    other catalogue screen - because these values feed every later quote.
+    """
+    try:
+        service = services.get_service(service_code)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:service_list")
+
+    if request.method == "POST":
+        # `service` is passed so the duplicate-name check ignores this row's own
+        # name; without it, re-saving the form unchanged would look like a clash.
+        form = ServiceForm(request.POST, service=service)
+        if form.is_valid():
+            try:
+                service = services.update_service(
+                    service.Service_code,
+                    service_name=form.cleaned_data["service_name"],
+                    base_cost=form.cleaned_data["base_cost"],
+                    est_duration=form.cleaned_data["est_duration"],
+                )
+            except DuplicateError as error:
+                form.add_error("service_name", str(error))
+            except ValidationError as error:
+                _service_error(request, error)
+            except ServiceError as error:
+                _service_error(request, error)
+            else:
+                messages.success(request, f"Service '{service.ServiceName}' updated.")
+                return redirect("core:service_list")
+    else:
+        form = ServiceForm(
+            initial={
+                "service_name": service.ServiceName,
+                "base_cost": service.BaseCost,
+                "est_duration": service.Est_Duration,
+            },
+            service=service,
+        )
+
+    return render(
+        request,
+        "core/service_form.html",
+        {
+            "identity": _identity(request),
+            "form": form,
+            "mode": "edit",
+            "service": service,
+            # Shown so the administrator is warned before a price change that the
+            # service is already in use; appointments keep the price they were
+            # booked at, so edits are never retroactive.
+            "appointment_count": service.appointments.count(),
+            "technician_count": service.qualified_technicians.count(),
+        },
     )
 
 
@@ -756,6 +891,18 @@ def booking_view(request):
         return redirect("core:appointment_list")
 
     form = BookingForm()
+    # A "book this service" link on the landing page names a service in the query
+    # string, so the customer lands on the booking form with that service already
+    # chosen. Only a service that actually exists is applied, and only on a fresh
+    # GET: a POST carries its own selection and must not be overwritten.
+    if request.method == "GET":
+        preset_service = request.GET.get("service", "").strip()
+        if preset_service:
+            form = BookingForm(
+                initial={"service": Service.objects.filter(
+                    Service_code=preset_service
+                ).first()}
+            )
     if request.method == "POST":
         form = BookingForm(request.POST)
         if form.is_valid():
@@ -769,6 +916,8 @@ def booking_view(request):
                     phone=form.cleaned_data.get("phone", ""),
                     email=form.cleaned_data.get("email", ""),
                     notes=form.cleaned_data.get("notes", ""),
+                    car_model=form.cleaned_data["car_model"],
+                    license_plate=form.cleaned_data["license_plate"],
                 )
             except ServiceError as error:
                 # Business rules are re-checked here, so a race for the last
@@ -858,6 +1007,8 @@ def appointment_create_view(request):
                     phone=form.cleaned_data.get("phone", ""),
                     email=form.cleaned_data.get("email", ""),
                     notes=form.cleaned_data.get("notes", ""),
+                    car_model=form.cleaned_data["car_model"],
+                    license_plate=form.cleaned_data["license_plate"],
                 )
                 # A vehicle may be linked straight away when it is known.
                 vehicle = form.cleaned_data.get("vehicle")
@@ -977,6 +1128,12 @@ def appointment_edit_view(request, appointment_id: int):
         "email": appointment.CustomerEmail,
         "service": appointment.ServiceCode,
         "vehicle": appointment.VehicleID,
+        # Prefill the vehicle details from whatever is currently linked, so a
+        # correction starts from the stored values rather than a blank field.
+        "car_model": appointment.VehicleID.Model if appointment.VehicleID else "",
+        "license_plate": (
+            appointment.VehicleID.LicensePlate if appointment.VehicleID else ""
+        ),
         "notes": appointment.Notes,
         "appointment_date": appointment.AppointmentDate,
         "appointment_time": appointment.AppointmentTime.strftime("%H:%M"),
@@ -996,6 +1153,8 @@ def appointment_edit_view(request, appointment_id: int):
                     phone=form.cleaned_data.get("phone", ""),
                     email=form.cleaned_data.get("email", ""),
                     notes=form.cleaned_data.get("notes", ""),
+                    car_model=form.cleaned_data["car_model"],
+                    license_plate=form.cleaned_data["license_plate"],
                 )
                 vehicle = form.cleaned_data.get("vehicle")
                 if vehicle is not None and appointment.VehicleID_id != vehicle.VehicleID:
@@ -2635,7 +2794,7 @@ def invoice_generate_view(request, repair_id: int):
                 messages.success(
                     request,
                     f"Invoice #{invoice.pk} generated for {repair.customer_name}: "
-                    f"${invoice.TotalAmount} ({invoice.PaymentStatus.lower()}).",
+                    f"{CURRENCY_CODE} {invoice.TotalAmount} ({invoice.PaymentStatus.lower()}).",
                 )
                 return redirect("core:invoice_detail", invoice_id=invoice.pk)
         else:
@@ -2842,6 +3001,77 @@ def repair_status_lookup_view(request):
         request,
         "core/repair_status_public.html",
         {"form": form, "status": status},
+    )
+
+
+def customer_invoice_view(request, reference_code: str):
+    """The customer's itemised invoice, opened from the repair-status result.
+
+    Public for the same reason as the status lookup: the booking reference is the
+    only credential the customer has. An invoice is shown only once the job is
+    Completed and billed; every other case - including an unknown reference -
+    gets the same not-found message and a 404, so the page reveals nothing about
+    references that are not the visitor's own.
+    """
+    try:
+        invoice = services.get_customer_invoice(reference_code)
+    except NotFoundError as error:
+        return render(
+            request,
+            "core/customer_invoice.html",
+            {"invoice": None, "error": str(error)},
+            status=404,
+        )
+    return render(request, "core/customer_invoice.html", {"invoice": invoice})
+
+
+def customer_payment_view(request, reference_code: str):
+    """Choose how to pay an outstanding invoice; only Cash is offered for now.
+
+    Choosing Cash records the customer's choice and leaves the invoice Pending:
+    the money changes hands at the counter, and only staff can mark a bill Paid.
+    A Paid invoice has nothing left to pay, so it sends the customer back to the
+    invoice instead of showing the form.
+    """
+    try:
+        invoice = services.get_customer_invoice(reference_code)
+    except NotFoundError as error:
+        return render(
+            request,
+            "core/customer_invoice.html",
+            {"invoice": None, "error": str(error)},
+            status=404,
+        )
+
+    if invoice["is_paid"]:
+        messages.info(request, "This invoice has already been paid - thank you.")
+        return redirect("core:customer_invoice", reference_code=invoice["reference_code"])
+
+    form = CustomerPaymentForm()
+    if request.method == "POST":
+        form = CustomerPaymentForm(request.POST)
+        if form.is_valid():
+            try:
+                services.choose_customer_payment_method(
+                    reference_code, form.cleaned_data["payment_method"]
+                )
+            except ServiceError as error:
+                _service_error(request, error)
+            else:
+                messages.success(
+                    request,
+                    "Cash payment selected. Please pay "
+                    f"{CURRENCY_CODE} {invoice['total_amount']} at the counter when "
+                    "you collect your vehicle.",
+                )
+            return redirect(
+                "core:customer_invoice", reference_code=invoice["reference_code"]
+            )
+
+    return render(
+        request,
+        "core/customer_payment.html",
+        {"invoice": invoice, "form": form},
     )
 
 

@@ -80,7 +80,7 @@
     <h2 class="card__title">Parts recorded</h2>
     <span class="card__hint">
       {% if parts_usage %}
-        {{ parts_usage|length }} line{{ parts_usage|length|pluralize }} — ${{ preview.parts_cost }}
+        {{ parts_usage|length }} line{{ parts_usage|length|pluralize }} — {{ currency }} {{ preview.parts_cost }}
       {% else %}
         None — this will be a labour-only invoice
       {% endif %}
@@ -104,15 +104,15 @@
             <tr>
               <td class="cell-strong">{{ item.PartID.PartName }}</td>
               <td class="num">{{ item.Qty_Used }}</td>
-              <td class="num">${{ item.Unit_Price }}</td>
-              <td class="num cell-strong">${{ item.line_total }}</td>
+              <td class="num">{{ currency }} {{ item.Unit_Price }}</td>
+              <td class="num cell-strong">{{ currency }} {{ item.line_total }}</td>
             </tr>
           {% endfor %}
           <tr>
             <th scope="row" class="cell-strong">Parts total</th>
             <td class="num"></td>
             <td class="num"></td>
-            <td class="num cell-strong">${{ preview.parts_cost }}</td>
+            <td class="num cell-strong">{{ currency }} {{ preview.parts_cost }}</td>
           </tr>
         </tbody>
       </table>
@@ -125,7 +125,7 @@
   {% else %}
     <p class="card__text">
       No parts were drawn against this job, so the parts total will be
-      <strong>$0.00</strong>.
+      <strong>{{ currency }} 0.00</strong>.
     </p>
   {% endif %}
 </section>
@@ -171,7 +171,7 @@
           <tr>
             <th scope="row" class="cell-strong">Labour</th>
             <td>{{ preview.service_name }} base cost</td>
-            <td class="num">${{ preview.labour_cost }}</td>
+            <td class="num">{{ currency }} {{ preview.labour_cost }}</td>
           </tr>
           <tr>
             <th scope="row" class="cell-strong">Parts</th>
@@ -182,22 +182,22 @@
                 No parts recorded
               {% endif %}
             </td>
-            <td class="num">${{ preview.parts_cost }}</td>
+            <td class="num">{{ currency }} {{ preview.parts_cost }}</td>
           </tr>
           <tr>
             <th scope="row" class="cell-strong">Subtotal</th>
             <td>Labour plus parts</td>
-            <td class="num">${{ preview.subtotal|default_if_none:"—" }}</td>
+            <td class="num">{{ currency }} {{ preview.subtotal|default_if_none:"—" }}</td>
           </tr>
           <tr>
             <th scope="row" class="cell-strong">Tax</th>
             <td>{{ preview.tax_rate }}% of the subtotal</td>
-            <td class="num">${{ preview.tax_amount }}</td>
+            <td class="num">{{ currency }} {{ preview.tax_amount }}</td>
           </tr>
           <tr>
             <th scope="row" class="cell-strong">Total due</th>
             <td>Subtotal plus tax</td>
-            <td class="num cell-strong">${{ preview.total_amount }}</td>
+            <td class="num cell-strong">{{ currency }} {{ preview.total_amount }}</td>
           </tr>
         </tbody>
       </table>

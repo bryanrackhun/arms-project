@@ -1,0 +1,45 @@
+{# Shared public footer: used by the landing page and the static content pages. #}
+{# The links point at the real static pages rather than placeholders. Section #}
+{# anchors are prefixed with the home URL so they also work from a static page. #}
+<footer class="pubfoot" id="contact">
+  <div class="pubfoot__inner">
+    <div class="pubfoot__about">
+      <span class="pubfoot__brand">ARMS</span>
+      <p class="pubfoot__blurb">
+        The Automotive Repair Management System behind our workshop: online
+        booking, live repair tracking and clear invoices, all in one place.
+      </p>
+      <span class="pubfoot__hours">Open for appointments 08:00 – 17:30</span>
+    </div>
+
+    <nav class="pubfoot__col" aria-label="Customers">
+      <h2 class="pubfoot__head">Customers</h2>
+      <ul class="pubfoot__list">
+        <li><a href="{% url 'core:booking' %}">Book a repair</a></li>
+        <li><a href="{% url 'core:home' %}#services">Services &amp; prices</a></li>
+        <li><a href="{% url 'core:home' %}#track">Track my repair</a></li>
+        <li><a href="{% url 'core:home' %}#faq">Common questions</a></li>
+      </ul>
+    </nav>
+
+    <nav class="pubfoot__col" aria-label="Workshop">
+      <h2 class="pubfoot__head">Workshop</h2>
+      <ul class="pubfoot__list">
+        <li><a href="{% url 'core:about' %}">About</a></li>
+        <li><a href="{% url 'core:contact' %}">Contact Us</a></li>
+        <li><a href="{% url 'core:login' %}">Staff login</a></li>
+      </ul>
+    </nav>
+
+    <nav class="pubfoot__col" aria-label="Footer">
+      <h2 class="pubfoot__head">Legal</h2>
+      <ul class="pubfoot__list">
+        <li><a href="{% url 'core:privacy' %}">Privacy Policy</a></li>
+        <li><a href="{% url 'core:terms' %}">Terms</a></li>
+      </ul>
+    </nav>
+  </div>
+  <div class="pubfoot__base">
+    <span>&copy; {% now "Y" %} ARMS. All prices in {{ currency }}.</span>
+  </div>
+</footer>

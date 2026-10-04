@@ -1,0 +1,150 @@
+{% extends "core/base.html" %}
+{% block title %}Terms of service — ARMS{% endblock %}
+{% block body_class %}page-home{% endblock %}
+
+{% block public_header %}
+{% include "core/_pubbar.html" %}
+{% endblock %}
+
+{% block content %}
+{# Static terms page: the rules of booking, arrival, repair and payment, #}
+{# written to match the system's actual workflow (pending request, confirmed #}
+{# slot, check-in, repair, completed, invoice, payment). #}
+{% include "core/_pub_hero.html" with crumb="Terms of service" eyebrow="Legal" title="Terms of service" title_id="terms-title" lead="The terms that apply when you book a repair with us, from your first request to the final invoice." %}
+
+<section class="home-section pub-page" aria-label="Terms of service">
+  <div class="home-wrap pub-layout">
+    <nav class="pub-toc" aria-label="On this page">
+      <p class="pub-toc__head">On this page</p>
+      <ol class="pub-toc__list">
+        <li><a href="#t-requests">Bookings are requests</a></li>
+        <li><a href="#t-times">Appointment times</a></li>
+        <li><a href="#t-details">Your details</a></li>
+        <li><a href="#t-checkin">Check-in and cancellation</a></li>
+        <li><a href="#t-repair">The repair</a></li>
+        <li><a href="#t-pricing">Pricing and payment</a></li>
+        <li><a href="#t-warranty">Workmanship and parts</a></li>
+        <li><a href="#t-reference">Your booking reference</a></li>
+        <li><a href="#t-liability">Liability</a></li>
+        <li><a href="#t-changes">Changes to these terms</a></li>
+        <li><a href="#t-contact">Contact</a></li>
+      </ol>
+    </nav>
+
+    <div class="pub-page__inner">
+      <div class="callout callout--soft">
+        <span class="callout__icon">{% include "core/_pub_icon.html" with name="doc" %}</span>
+        <div>
+          <h2 class="callout__title">In brief</h2>
+          <p>
+            Your booking is confirmed once our team accepts it. Arrive on time
+            with your reference, follow the repair online, and pay the invoice in
+            cash at the counter when the work is done.
+          </p>
+        </div>
+      </div>
+
+      <h2 id="t-requests">1. Bookings are requests</h2>
+      <p>
+        An online booking is submitted as <strong>pending</strong>. It becomes a
+        confirmed appointment only once our team accepts it. The slot you pick is
+        a request, not a guarantee.
+      </p>
+
+      <h2 id="t-times">2. Appointment times</h2>
+      <p>
+        Appointments run on the half hour between 08:00 and 17:30. A slot must be
+        in the future and not already held by another active appointment; the
+        booking form will tell you if the time you picked is taken.
+      </p>
+
+      <h2 id="t-details">3. Your details</h2>
+      <p>
+        When booking you give your name, a phone number or email address, and
+        your car's model and registration number. Please make sure these are
+        accurate. We use them to contact you and identify your vehicle, and
+        reception confirms them with you at check-in.
+      </p>
+
+      <h2 id="t-checkin">4. Check-in and cancellation</h2>
+      <p>
+        Please arrive at your confirmed time so reception can check your vehicle
+        in. If you cannot make it, call the workshop - a pending or confirmed
+        appointment can be cancelled. An appointment you miss without telling us
+        may be recorded as a no-show, and the slot is released to other
+        customers.
+      </p>
+
+      <h2 id="t-repair">5. The repair</h2>
+      <p>
+        After check-in, a technician is assigned and the job moves through
+        <em>not started</em>, <em>in progress</em> and <em>completed</em>. Each
+        stage is visible on the public status page using your booking reference.
+        If further work or parts are needed, the workshop records them against the
+        job and they appear on the invoice.
+      </p>
+
+      <h2 id="t-pricing">6. Pricing and payment</h2>
+      <p>
+        Service base prices and estimated durations are shown in the catalogue
+        before you book, and all amounts are quoted in Myanmar Kyat (MMK). The
+        final invoice covers the labour and any parts used, plus any applicable
+        tax shown on the invoice. Estimated durations are a guide, not a promise.
+      </p>
+      <p>
+        Once the repair is completed and billed, you choose your payment method on
+        the invoice page. The workshop currently accepts <strong>cash only</strong>,
+        paid at the counter; the invoice is marked paid once reception has taken
+        your payment.
+      </p>
+
+      <h2 id="t-reference">7. Your booking reference</h2>
+      <p>
+        Your booking reference is how you follow the repair and view the final
+        bill. Anyone who has it can see your repair's progress and invoice, so
+        keep it private and share it only with people you trust to act for you.
+      </p>
+
+      <h2 id="t-warranty">8. Workmanship and parts</h2>
+      <p>
+        Every inspection finding, part drawn and status change is recorded
+        against your job, so if something is not right, bring the booking
+        reference back to the workshop: the record of exactly what was done and
+        fitted is the starting point for putting it right. Fitted parts are the
+        parts recorded on your invoice - the record and the bill are one and
+        the same.
+      </p>
+
+      <h2 id="t-liability">9. Liability</h2>
+      <p>
+        The workshop takes care of your vehicle while it is checked in for the
+        booked work. Vehicles must be collected during opening hours once the
+        repair is completed. We are not responsible for personal items left in
+        the vehicle - please take valuables with you when you drop it off.
+        Nothing in these terms limits anything that cannot be limited by law.
+      </p>
+
+      <h2 id="t-changes">10. Changes to these terms</h2>
+      <p>
+        We may update these terms as the workshop's services change. The version
+        on this page is the one that applies to new bookings.
+      </p>
+
+      <h2 id="t-contact">11. Contact</h2>
+      <p>
+        Any question about these terms or a specific job -
+        <a href="{% url 'core:contact' %}">contact the workshop</a>.
+      </p>
+
+      <div class="pub-page__cta">
+        <a class="btn btn--primary btn--lg" href="{% url 'core:booking' %}">Book a repair</a>
+        <a class="btn btn--ghost btn--lg" href="{% url 'core:privacy' %}">Privacy policy</a>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block public_footer %}
+{% include "core/_pubfoot.html" %}
+{% endblock %}

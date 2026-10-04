@@ -90,7 +90,7 @@
       </div>
       <div class="dl-grid__row">
         <dt>Hourly rate</dt>
-        <dd class="dl-grid__strong">${{ technician.Hourly_rate }} / hr</dd>
+        <dd class="dl-grid__strong">{{ currency }} {{ technician.Hourly_rate }} / hr</dd>
       </div>
       <div class="dl-grid__row">
         <dt>Qualified for</dt>
@@ -116,7 +116,7 @@
               <tr>
                 <td class="mono">{{ service.Service_code }}</td>
                 <td>{{ service.ServiceName }}</td>
-                <td class="num">${{ service.BaseCost }}</td>
+                <td class="num">{{ currency }} {{ service.BaseCost }}</td>
                 <td class="num">{{ service.Est_Duration }} min</td>
               </tr>
             {% endfor %}

@@ -1,0 +1,235 @@
+{% extends "core/base.html" %}
+{% block title %}About us — ARMS{% endblock %}
+{% block body_class %}page-home{% endblock %}
+
+{% block public_header %}
+{% include "core/_pubbar.html" %}
+{% endblock %}
+
+{% block content %}
+{# Static content page: the story of the workshop, how the system works, and #}
+{# the team behind it. Pure public copy - no view data beyond the template. #}
+{% include "core/_pub_hero.html" with crumb="About us" eyebrow="About us" title="About ARMS" narrow=True title_id="about-title" lead="ARMS — the Automotive Repair Management System — runs our workshop's front desk and workshop floor. Every booking, bay, inspection, part and invoice passes through the same system, so nothing is lost between a customer's request and a finished repair." %}
+
+<section class="home-section pub-page" aria-label="About the workshop">
+  <div class="home-wrap pub-page__inner">
+
+    <div class="pub-split">
+      <div>
+        <h2>Our story</h2>
+        <p>
+          Running a busy workshop on paper means lost job cards, double-booked
+          bays and customers who have to phone to find out whether their car is
+          ready. ARMS was built to fix that. It puts the whole life of a repair
+          in one place, from the first online booking to the paid invoice, so
+          everyone works from the same up-to-date record.
+        </p>
+        <p>
+          For customers, that means booking without an account, seeing prices
+          before committing and following the repair live. For our staff, it
+          means less admin and more time spent on the cars themselves.
+        </p>
+      </div>
+      <ul class="stat-strip" aria-label="ARMS at a glance">
+        <li class="stat-strip__item">
+          <span class="stat-strip__num">20</span>
+          <span class="stat-strip__lbl">half-hour booking slots every day</span>
+        </li>
+        <li class="stat-strip__item">
+          <span class="stat-strip__num">6</span>
+          <span class="stat-strip__lbl">repair stages you can track online</span>
+        </li>
+        <li class="stat-strip__item">
+          <span class="stat-strip__num">0</span>
+          <span class="stat-strip__lbl">accounts needed to book</span>
+        </li>
+      </ul>
+    </div>
+
+    <h2>How we work</h2>
+    <p>
+      Customers book online without an account: choose a service, pick a
+      half-hour slot between 08:00 and 17:30, and our reception team reviews and
+      confirms the request. When the vehicle arrives it is checked in, a
+      technician is assigned, and every inspection and part used against the job
+      is recorded. Customers follow the whole repair with nothing but the booking
+      reference they received at confirmation time.
+    </p>
+
+    <h2>What we value</h2>
+    <ul class="info-grid">
+      <li class="info-card">
+        <span class="info-card__icon">{% include "core/_pub_icon.html" with name="eye" %}</span>
+        <h3 class="info-card__title">Transparency</h3>
+        <p>Prices are published before you book, and every stage of your repair is visible to you.</p>
+      </li>
+      <li class="info-card">
+        <span class="info-card__icon">{% include "core/_pub_icon.html" with name="shield" %}</span>
+        <h3 class="info-card__title">Accountability</h3>
+        <p>Every inspection, part and status change is recorded against your job.</p>
+      </li>
+      <li class="info-card">
+        <span class="info-card__icon">{% include "core/_pub_icon.html" with name="lock" %}</span>
+        <h3 class="info-card__title">Privacy</h3>
+        <p>Staff see only what their role needs, and the public status page shows no internal notes.</p>
+      </li>
+      <li class="info-card">
+        <span class="info-card__icon">{% include "core/_pub_icon.html" with name="clock" %}</span>
+        <h3 class="info-card__title">Respect for your time</h3>
+        <p>Fixed half-hour slots and a confirmed booking mean less waiting at the counter.</p>
+      </li>
+    </ul>
+
+    <h2>Our team</h2>
+    <p>
+      The workshop is staffed by three roles, and each sees only the parts of
+      the system it needs.
+    </p>
+    <ul class="role-list">
+      <li class="role-list__item">
+        <span class="role-list__icon">{% include "core/_pub_icon.html" with name="users" %}</span>
+        <div>
+          <h3 class="role-list__title">Administrators</h3>
+          <p>Manage the service catalogue, spare parts stock, staff accounts and payroll.</p>
+        </div>
+      </li>
+      <li class="role-list__item">
+        <span class="role-list__icon">{% include "core/_pub_icon.html" with name="chat" %}</span>
+        <div>
+          <h3 class="role-list__title">Receptionists</h3>
+          <p>Review and confirm bookings, check vehicles in, assign jobs and handle invoicing and payment.</p>
+        </div>
+      </li>
+      <li class="role-list__item">
+        <span class="role-list__icon">{% include "core/_pub_icon.html" with name="wrench" %}</span>
+        <div>
+          <h3 class="role-list__title">Technicians</h3>
+          <p>Carry out the repairs they are qualified for, recording inspections, parts used and progress as they go.</p>
+        </div>
+      </li>
+    </ul>
+
+    <h2>Meet the workshop</h2>
+    <p>
+      The people you will actually deal with, and what each of them looks after.
+    </p>
+    <ul class="bio-grid">
+      <li class="bio-card">
+        <span class="bio-card__avatar" aria-hidden="true">{% include "core/_pub_icon.html" with name="users" %}</span>
+        <div class="bio-card__body">
+          <h3 class="bio-card__name">The workshop administrator</h3>
+          <p class="bio-card__role">Catalogue, stock and payroll</p>
+          <p>
+            Keeps the service list and prices current, watches the parts
+            inventory and reorders before anything runs low, and looks after
+            staff accounts and technician pay.
+          </p>
+        </div>
+      </li>
+      <li class="bio-card">
+        <span class="bio-card__avatar" aria-hidden="true">{% include "core/_pub_icon.html" with name="chat" %}</span>
+        <div class="bio-card__body">
+          <h3 class="bio-card__name">The reception team</h3>
+          <p class="bio-card__role">Bookings, check-in and the front desk</p>
+          <p>
+            Reviews every online request and confirms your slot, checks your
+            vehicle in when you arrive, and prepares the invoice and takes
+            payment when the work is done.
+          </p>
+        </div>
+      </li>
+      <li class="bio-card">
+        <span class="bio-card__avatar" aria-hidden="true">{% include "core/_pub_icon.html" with name="wrench" %}</span>
+        <div class="bio-card__body">
+          <h3 class="bio-card__name">The senior technician</h3>
+          <p class="bio-card__role">Diagnostics and complex repairs</p>
+          <p>
+            Takes the jobs that need a trained eye, records the vehicle
+            inspection the moment it is done, and draws only the parts the job
+            actually needs.
+          </p>
+        </div>
+      </li>
+      <li class="bio-card">
+        <span class="bio-card__avatar" aria-hidden="true">{% include "core/_pub_icon.html" with name="gauge" %}</span>
+        <div class="bio-card__body">
+          <h3 class="bio-card__name">The service technicians</h3>
+          <p class="bio-card__role">Routine services and maintenance</p>
+          <p>
+            Assigned to the services they are certified for - oil changes,
+            brakes, suspension and the rest - and update the job's progress as
+            they work.
+          </p>
+        </div>
+      </li>
+    </ul>
+
+    <h2>A short history</h2>
+    <ol class="timeline" aria-label="Workshop history">
+      <li class="timeline__step">
+        <span class="timeline__dot" aria-hidden="true"></span>
+        <div>
+          <h3 class="timeline__title">The paper years</h3>
+          <p>
+            Two bays, a diary and paper job cards. Slot clashes and lost cards
+            were a weekly event, and customers phoned the front desk just to
+            ask whether their car was ready.
+          </p>
+        </div>
+      </li>
+      <li class="timeline__step">
+        <span class="timeline__dot" aria-hidden="true"></span>
+        <div>
+          <h3 class="timeline__title">Online booking arrives</h3>
+          <p>
+            Customers could finally request a slot without calling. Bookings
+            arrive as pending requests that reception confirms, so the diary
+            is never double-booked again.
+          </p>
+        </div>
+      </li>
+      <li class="timeline__step">
+        <span class="timeline__dot" aria-hidden="true"></span>
+        <div>
+          <h3 class="timeline__title">The workshop goes digital</h3>
+          <p>
+            Vehicle check-in, bay allocation, technician assignment and
+            inspections moved into the system, with the parts catalogue and
+            usage tracking following.
+          </p>
+        </div>
+      </li>
+      <li class="timeline__step">
+        <span class="timeline__dot" aria-hidden="true"></span>
+        <div>
+          <h3 class="timeline__title">One record, end to end</h3>
+          <p>
+            Today the invoice, the payment record and the public status page
+            all hang off the same job. A customer with a booking reference can
+            see the whole story without a single phone call.
+          </p>
+        </div>
+      </li>
+    </ol>
+
+    <h2>What we repair</h2>
+    <p>
+      The service catalogue lists every repair we offer, with its base price and
+      estimated duration, before you book - from a routine oil change to more
+      involved mechanical work. See the
+      <a href="{% url 'core:home' %}#services">services section</a> of our home
+      page for the current list, or
+      <a href="{% url 'core:booking' %}">make a booking</a> straight away.
+    </p>
+
+    <div class="pub-page__cta">
+      <a class="btn btn--primary btn--lg" href="{% url 'core:booking' %}">Book a repair</a>
+      <a class="btn btn--ghost btn--lg" href="{% url 'core:contact' %}">Contact us</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block public_footer %}
+{% include "core/_pubfoot.html" %}
+{% endblock %}

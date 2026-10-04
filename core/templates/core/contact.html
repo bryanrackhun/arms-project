@@ -1,0 +1,163 @@
+{% extends "core/base.html" %}
+{% block title %}Contact us — ARMS{% endblock %}
+{% block body_class %}page-home{% endblock %}
+
+{% block public_header %}
+{% include "core/_pubbar.html" %}
+{% endblock %}
+
+{% block content %}
+{# Static contact page: where the workshop is, when it is open, and how to #}
+{# reach it. Phone numbers are deliberately text, not links, so they can be #}
+{# read and dialled from any device. #}
+{% include "core/_pub_hero.html" with crumb="Contact us" eyebrow="Get in touch" title="Contact us" narrow=True title_id="contact-title" lead="Questions about a booking, a repair or a bill? Here is how to reach the workshop, and what to have ready so we can help you quickly." %}
+
+<section class="home-section pub-page" aria-label="Ways to reach us">
+  <div class="home-wrap pub-page__inner">
+
+    <ul class="info-grid info-grid--3">
+      <li class="info-card">
+        <span class="info-card__icon">{% include "core/_pub_icon.html" with name="phone" %}</span>
+        <h3 class="info-card__title">By phone</h3>
+        <p>
+          Call the workshop and we will look up your booking, vehicle or invoice.
+          Have your booking reference to hand if you are asking about a repair -
+          it is the fastest way for us to find your job.
+        </p>
+      </li>
+      <li class="info-card">
+        <span class="info-card__icon">{% include "core/_pub_icon.html" with name="pin" %}</span>
+        <h3 class="info-card__title">In person</h3>
+        <p>
+          Walk in during opening hours and the reception desk can check your vehicle
+          in, take a new booking, or settle an invoice for a completed repair.
+        </p>
+      </li>
+      <li class="info-card">
+        <span class="info-card__icon">{% include "core/_pub_icon.html" with name="calendar" %}</span>
+        <h3 class="info-card__title">Online</h3>
+        <p>
+          The quickest way to get a slot. <a href="{% url 'core:booking' %}">Book a
+          repair</a> any time, and follow it on the
+          <a href="{% url 'core:repair_status_lookup' %}">repair status page</a>.
+        </p>
+      </li>
+    </ul>
+
+    <div class="pub-split">
+      <div>
+        <h2>Opening hours</h2>
+        <p>
+          Appointments run every half hour from 08:00 to 17:30. Bookings made online
+          are reviewed by our reception team before they are confirmed, so the slot
+          you request is a request, not a guarantee, until you hear back.
+        </p>
+        <p>
+          You can submit an online booking at any time of day. Requests that arrive
+          outside opening hours are reviewed when reception is next in.
+        </p>
+      </div>
+      <table class="hours" aria-label="Appointment times">
+        <tbody>
+          <tr><th scope="row">First appointment</th><td>08:00</td></tr>
+          <tr><th scope="row">Last appointment</th><td>17:30</td></tr>
+          <tr><th scope="row">Slot length</th><td>30 minutes</td></tr>
+          <tr><th scope="row">Online booking</th><td>Any time</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>What to have ready</h2>
+    <p>We can help you much faster if you have the right details to hand:</p>
+    <ul class="check-list">
+      <li>{% include "core/_pub_icon.html" with name="check" %}<span><strong>About a repair:</strong> your booking reference.</span></li>
+      <li>{% include "core/_pub_icon.html" with name="check" %}<span><strong>About a bill:</strong> your booking reference. The invoice is linked to it.</span></li>
+      <li>{% include "core/_pub_icon.html" with name="check" %}<span><strong>A new booking:</strong> the service you need, your car's model and registration, and a couple of times that suit you.</span></li>
+      <li>{% include "core/_pub_icon.html" with name="check" %}<span><strong>Checking in:</strong> your booking reference. We confirm your car's details with you at the desk.</span></li>
+    </ul>
+
+    <div class="callout">
+      <span class="callout__icon">{% include "core/_pub_icon.html" with name="key" %}</span>
+      <div>
+        <h2 class="callout__title">Lost your booking reference?</h2>
+        <p>
+          The <a href="{% url 'core:repair_status_lookup' %}">repair status page</a>
+          needs the reference we gave you at confirmation. If you have lost it, call
+          the workshop and we will look up your booking for you.
+        </p>
+      </div>
+    </div>
+
+    <h2>Cancelling or changing a booking</h2>
+    <p>
+      Plans change. Call or visit the workshop and reception can cancel a pending or
+      confirmed appointment. To move to a different time, cancel the existing booking
+      and make a new one for the slot you want. Letting us know early frees the slot
+      for another customer.
+    </p>
+
+    <h2>Frequently asked questions</h2>
+    {# Reuses the landing page's FAQ accordion: native <details>, no JavaScript. #}
+    <div class="faq faq--page">
+      <details class="faq__item">
+        <summary class="faq__q">When is my slot actually held for me?</summary>
+        <div class="faq__a">
+          <p>Once reception accepts your request. Until then the booking is
+          <strong>pending</strong>: the slot you picked is a request, not a
+          reservation, and reception confirms it against the workshop diary.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Can I book for someone else?</summary>
+        <div class="faq__a">
+          <p>Yes. Give the driver's name and phone number on the booking form,
+          and hand the booking reference to whoever brings the car in. Anyone
+          holding the reference can follow the repair and view the invoice.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Do I have to bring paperwork for my car?</summary>
+        <div class="faq__a">
+          <p>No. The booking form already captures the model and registration,
+          and reception confirms the details with you at check-in. Just bring
+          the car and the booking reference.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Can I get an update by phone instead of online?</summary>
+        <div class="faq__a">
+          <p>Of course. The public status page is there for convenience, not as
+          a requirement. Call the workshop with your booking reference and
+          reception will tell you exactly where the job stands.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">What if my repair needs parts you don't have in stock?</summary>
+        <div class="faq__a">
+          <p>The parts catalogue tracks stock, and the workshop is warned when
+          something runs low. If a part still has to be ordered for your job,
+          the technician records it against the repair and it appears on your
+          invoice - we will tell you when it affects the completion date.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Can I pay by card?</summary>
+        <div class="faq__a">
+          <p>Not at the moment. Payment is cash only, taken at the reception
+          desk when you collect the car; the invoice is marked paid once
+          reception has taken it.</p>
+        </div>
+      </details>
+    </div>
+
+    <div class="pub-page__cta">
+      <a class="btn btn--primary btn--lg" href="{% url 'core:booking' %}">Book a repair</a>
+      <a class="btn btn--ghost btn--lg" href="{% url 'core:about' %}">About us</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block public_footer %}
+{% include "core/_pubfoot.html" %}
+{% endblock %}

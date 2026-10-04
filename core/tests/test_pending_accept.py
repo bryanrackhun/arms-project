@@ -50,6 +50,7 @@ class PendingLifecycleTestCase(RoleTestCase):
         return services.book_appointment(
             first, last, self.service.Service_code, self.date,
             slot or self.slot, phone="0400000000", email="sam@example.com",
+            car_model="Toyota Corolla", license_plate="PEND123",
         )
 
 
@@ -293,6 +294,8 @@ class PublicBookingPendingTests(PendingLifecycleTestCase):
                 "phone": "0400000000",
                 "email": "sam@example.com",
                 "service": self.service.Service_code,
+                "car_model": "Toyota Corolla",
+                "license_plate": "PEND123",
                 "appointment_date": self.date.isoformat(),
                 "appointment_time": (slot or self.slot).strftime("%H:%M"),
             },
@@ -541,6 +544,8 @@ class PendingQueueViewTests(PendingLifecycleTestCase):
                 "phone": "0400000001",
                 "email": "pat@example.com",
                 "service": self.service.Service_code,
+                "car_model": "Toyota Corolla",
+                "license_plate": "PENDK1",
                 "appointment_date": self.date.isoformat(),
                 "appointment_time": self.slot.strftime("%H:%M"),
             },
@@ -564,6 +569,8 @@ class PendingQueueViewTests(PendingLifecycleTestCase):
                 "phone": "0400000001",
                 "email": "pat@example.com",
                 "service": self.service.Service_code,
+                "car_model": "Toyota Corolla",
+                "license_plate": "PENDK2",
                 "appointment_date": self.date.isoformat(),
                 "appointment_time": self.slot.strftime("%H:%M"),
             },

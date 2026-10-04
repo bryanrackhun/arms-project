@@ -1,87 +1,356 @@
 {% extends "core/base.html" %}
+{% load static %}
 {% block title %}Automotive Repair Management System{% endblock %}
 {% block body_class %}page-home{% endblock %}
-{% block content %}
-{# Public landing page: two doors - customers book without an account, staff log in. #}
-<div class="hero">
-  <div class="hero__text">
-    <span class="hero__mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-           stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14.7 6.3a4 4 0 0 0 5 5l-8.4 8.4a2.1 2.1 0 0 1-3-3Z"/><path d="M14.7 6.3 17.4 3.6"/>
-      </svg>
-    </span>
-    <h1 class="hero__title">Automotive Repair Management System</h1>
-    <p class="hero__lead">
-      Book a repair appointment in a couple of minutes. Pick a service and a
-      convenient time — no account needed. Our team reviews every request and
-      confirms your slot before you come in.
-    </p>
-    <div class="hero__actions">
-      <a class="btn btn--primary" href="{% url 'core:booking' %}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
-        </svg>
-        <span>Book a repair</span>
-      </a>
-      <a class="btn btn--ghost" href="{% url 'core:login' %}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-        </svg>
-        <span>Staff login</span>
-      </a>
-    </div>
-    <p class="hero__note">
-      Half-hour appointments between 08:00 and 17:30. You do not need vehicle
-      details to book — we record your vehicle when you arrive.
-    </p>
-  </div>
-</div>
 
-<section class="hero-stats">
-  <div class="hero-stats__item">
-    <span class="hero-stats__num">1</span>
-    <span class="hero-stats__lbl">Choose a service &amp; time</span>
-  </div>
-  <div class="hero-stats__item">
-    <span class="hero-stats__num">2</span>
-    <span class="hero-stats__lbl">We review your request</span>
-  </div>
-  <div class="hero-stats__item">
-    <span class="hero-stats__num">3</span>
-    <span class="hero-stats__lbl">Slot confirmed for your visit</span>
+{% block public_header %}
+{% include "core/_pubbar.html" %}
+{% endblock %}
+
+{% block content %}
+{# ---- hero ---------------------------------------------------------- #}
+<section class="home-hero" aria-labelledby="home-title">
+  <div class="home-wrap home-hero__inner">
+    <div class="home-hero__text">
+      <span class="eyebrow">Online booking &middot; Live repair tracking</span>
+      <h1 class="home-hero__title" id="home-title">Book your car repair online</h1>
+      <p class="home-hero__lead">
+        Book a repair appointment in a couple of minutes. Pick a service and a
+        convenient time — no account needed. Our team reviews every request and
+        confirms your slot before you come in.
+      </p>
+      <p class="home-hero__lead">
+        Half-hour appointments run between 08:00 and 17:30. Tell us your car's model
+        and registration number when you book, and your booking reference lets you
+        follow the repair from start to finish.
+      </p>
+      <div class="home-hero__actions">
+        <a class="btn btn--primary btn--lg" href="{% url 'core:booking' %}">Book a repair</a>
+        <a class="btn btn--ghost btn--lg" href="#track">Track my repair</a>
+      </div>
+      <ul class="hero-points">
+        <li>{% include "core/_pub_icon.html" with name="check" %}No account or sign-up</li>
+        <li>{% include "core/_pub_icon.html" with name="check" %}Prices shown before you book</li>
+        <li>{% include "core/_pub_icon.html" with name="check" %}Follow every repair stage</li>
+      </ul>
+    </div>
+
+    <figure class="home-hero__art">
+      <img src="{% static 'core/img/hero_section_photo.jpg' %}"
+           alt="Vehicles raised on lifts inside the ARMS workshop, with engines and tool benches in the foreground."
+           width="736" height="981" loading="eager" decoding="async">
+    </figure>
   </div>
 </section>
 
-{% if services %}
-  <section class="card">
-    <header class="card__head">
-      <h2 class="card__title">What we offer</h2>
-      <span class="card__hint">{{ service_total }} service{{ service_total|pluralize }} available</span>
-    </header>
-    <div class="table-wrap">
-      <table class="data">
-        <caption class="sr-only">Services offered by the workshop</caption>
-        <thead>
-          <tr>
-            <th scope="col">Service</th>
-            <th scope="col" class="num">Base cost</th>
-            <th scope="col" class="num">Est. duration</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for service in services %}
-            <tr>
-              <td class="cell-strong">{{ service.ServiceName }}</td>
-              <td class="num">${{ service.BaseCost }}</td>
-              <td class="num">{{ service.Est_Duration }} min</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+{# ---- why choose us -------------------------------------------------- #}
+{# What the system actually guarantees a customer, phrased as benefits. Each #}
+{# claim maps to real behaviour: reviewed bookings, a published catalogue, the #}
+{# reference-only status page and role-limited staff access. #}
+<section class="home-section home-section--alt" aria-labelledby="why-title">
+  <div class="home-wrap">
+    <span class="eyebrow eyebrow--center">Why ARMS</span>
+    <h2 class="home-section__title" id="why-title">A workshop that keeps you in the loop</h2>
+    <p class="home-section__lead home-section__lead--flush">
+      Every booking, inspection, part and invoice runs through one system, so
+      nothing gets lost between your first click and the moment you collect your car.
+    </p>
+    <ul class="feat-grid">
+      <li class="feat-card">
+        <span class="feat-card__icon">{% include "core/_pub_icon.html" with name="calendar" %}</span>
+        <h3 class="feat-card__title">Book in minutes</h3>
+        <p class="feat-card__text">
+          Choose a service and a half-hour slot online, any time of day. Reception
+          reviews your request and confirms it before you set off.
+        </p>
+      </li>
+      <li class="feat-card">
+        <span class="feat-card__icon">{% include "core/_pub_icon.html" with name="tag" %}</span>
+        <h3 class="feat-card__title">Clear, upfront prices</h3>
+        <p class="feat-card__text">
+          Every service lists its base cost in {{ currency }} and how long it
+          usually takes, so you know what to expect before you book.
+        </p>
+      </li>
+      <li class="feat-card">
+        <span class="feat-card__icon">{% include "core/_pub_icon.html" with name="eye" %}</span>
+        <h3 class="feat-card__title">Track every stage</h3>
+        <p class="feat-card__text">
+          From check-in to inspection to completion, your booking reference shows
+          exactly where your car is. You don't need to call and ask.
+        </p>
+      </li>
+      <li class="feat-card">
+        <span class="feat-card__icon">{% include "core/_pub_icon.html" with name="shield" %}</span>
+        <h3 class="feat-card__title">Qualified technicians</h3>
+        <p class="feat-card__text">
+          Jobs go only to technicians assigned to that service, and every
+          inspection and part used is recorded against your repair.
+        </p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+{# ---- popular services ---------------------------------------------- #}
+<section class="home-section" id="services" aria-labelledby="services-title">
+  <div class="home-wrap">
+    <span class="eyebrow eyebrow--center">Services</span>
+    <h2 class="home-section__title" id="services-title">Our Popular Services</h2>
+    <p class="home-section__lead home-section__lead--flush">
+      Our most-booked jobs, with prices and typical workshop times. Open the full
+      catalogue below to see everything we offer.
+    </p>
+
+    {% if popular_services %}
+      <ul class="svc-grid">
+        {% for service in popular_services %}
+          <li class="svc-card">
+            {# The framed box where a service photo would sit. No service photos #}
+            {# were supplied, so it carries a service icon instead. #}
+            <span class="svc-card__art" aria-hidden="true">
+              {% include "core/_service_icon.html" with name=service.ServiceName %}
+            </span>
+            <div class="svc-card__body">
+              <h3 class="svc-card__name">{{ service.ServiceName }}</h3>
+              {% if service.booking_count %}
+                <p class="svc-card__meta">
+                  Booked {{ service.booking_count }} time{{ service.booking_count|pluralize }}
+                </p>
+              {% endif %}
+              <p class="svc-card__price">From {{ currency }} {{ service.BaseCost }}</p>
+              <p class="svc-card__meta">About {{ service.Est_Duration }} min in the workshop</p>
+              <a class="svc-card__link" href="{% url 'core:booking' %}?service={{ service.Service_code }}">
+                Book this service
+              </a>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+
+      {# "Learn more" opens the full catalogue in place: there is no public #}
+      {# services page, and the admin service list is staff-only. #}
+      <details class="catalogue">
+        <summary class="btn btn--primary btn--lg catalogue__toggle">
+          <span class="catalogue__more">Learn More</span>
+          <span class="catalogue__less">Show less</span>
+        </summary>
+        <div class="catalogue__panel">
+          <p class="catalogue__hint">{{ service_total }} service{{ service_total|pluralize }} available</p>
+          <div class="table-wrap">
+            <table class="data">
+              <caption class="sr-only">Services offered by the workshop</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Service</th>
+                  <th scope="col" class="num">Base cost</th>
+                  <th scope="col" class="num">Est. duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for service in services %}
+                  <tr>
+                    <td class="cell-strong">{{ service.ServiceName }}</td>
+                    <td class="num">{{ currency }} {{ service.BaseCost }}</td>
+                    <td class="num">{{ service.Est_Duration }} min</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    {% else %}
+      <p class="home-section__empty">Our service list is being updated — please check back soon.</p>
+    {% endif %}
+  </div>
+</section>
+
+{# ---- how it works --------------------------------------------------- #}
+<section class="home-section home-section--alt" aria-labelledby="steps-title">
+  <div class="home-wrap">
+    <span class="eyebrow eyebrow--center">How it works</span>
+    <h2 class="home-section__title" id="steps-title">Get serviced in 3 steps</h2>
+    <ol class="step-grid">
+      <li class="step-card">
+        <span class="step-card__num" aria-hidden="true">1</span>
+        <span class="step-card__lbl">Choose a service</span>
+        <p class="step-card__txt">
+          Browse the catalogue and pick the repair you need. Not sure? Choose
+          the closest match and describe the problem in the notes.
+        </p>
+      </li>
+      <li class="step-card">
+        <span class="step-card__num" aria-hidden="true">2</span>
+        <span class="step-card__lbl">Pick an available time slot</span>
+        <p class="step-card__txt">
+          Slots run every half hour from 08:00 to 17:30. If a time is already
+          taken, the form tells you straight away so you can pick another.
+        </p>
+      </li>
+      <li class="step-card">
+        <span class="step-card__num" aria-hidden="true">3</span>
+        <span class="step-card__lbl">Fill in your details and track your repair</span>
+        <p class="step-card__txt">
+          Leave your name, a way to reach you and your car's model and
+          registration. Once we confirm, your reference unlocks live progress.
+        </p>
+      </li>
+    </ol>
+    <div class="home-section__cta">
+      <a class="btn btn--primary btn--lg" href="{% url 'core:booking' %}">Make a booking</a>
     </div>
-  </section>
-{% endif %}
+  </div>
+</section>
+
+{# ---- after you book ------------------------------------------------- #}
+{# The customer-facing repair stages, in the order the status page reports #}
+{# them, so a customer knows what each label will mean before they see it. #}
+<section class="home-section" aria-labelledby="journey-title">
+  <div class="home-wrap">
+    <span class="eyebrow eyebrow--center">Your repair, stage by stage</span>
+    <h2 class="home-section__title" id="journey-title">What happens after you book</h2>
+    <ol class="journey">
+      <li class="journey__step">
+        <span class="journey__dot" aria-hidden="true"></span>
+        <h3 class="journey__title">Booked</h3>
+        <p class="journey__text">Your request is reviewed and your slot confirmed. You receive a booking reference.</p>
+      </li>
+      <li class="journey__step">
+        <span class="journey__dot" aria-hidden="true"></span>
+        <h3 class="journey__title">Vehicle checked in</h3>
+        <p class="journey__text">Reception confirms your car's details when you arrive at the workshop.</p>
+      </li>
+      <li class="journey__step">
+        <span class="journey__dot" aria-hidden="true"></span>
+        <h3 class="journey__title">Job assigned</h3>
+        <p class="journey__text">A technician qualified for your service is assigned and takes on the job.</p>
+      </li>
+      <li class="journey__step">
+        <span class="journey__dot" aria-hidden="true"></span>
+        <h3 class="journey__title">Vehicle inspected</h3>
+        <p class="journey__text">The technician inspects the car and records what they find before work begins.</p>
+      </li>
+      <li class="journey__step">
+        <span class="journey__dot" aria-hidden="true"></span>
+        <h3 class="journey__title">In progress</h3>
+        <p class="journey__text">The repair is under way. Any parts fitted are logged against your job.</p>
+      </li>
+      <li class="journey__step">
+        <span class="journey__dot" aria-hidden="true"></span>
+        <h3 class="journey__title">Completed</h3>
+        <p class="journey__text">Work is done and your invoice is ready to view and settle using your reference.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+{# ---- track my repair ------------------------------------------------ #}
+{# Repair-progress lookup, right on the landing page: a returning customer #}
+{# holds a reference and should not have to hunt for a separate screen. The #}
+{# same fields, service call and result block back the dedicated page, so the #}
+{# two cannot disagree. #}
+<section class="home-section home-section--alt home-track" id="track" aria-labelledby="track-title">
+  <div class="home-wrap home-track__inner">
+    <span class="eyebrow eyebrow--center">Track my repair</span>
+    <h2 class="home-section__title" id="track-title">Check your repair status</h2>
+    <p class="home-section__lead">
+      Already booked with us? Enter the booking reference from your confirmation to see
+      how far along your repair is — no account or login needed. If you have lost the
+      reference, call the workshop and we will look up your booking for you.
+    </p>
+
+    {% include "core/_repair_status_lookup.html" with form=status_form heading="Your booking reference" button="Check status" action="#track" %}
+
+    <p class="note">
+      <a href="{% url 'core:repair_status_lookup' %}">Open the repair status page</a>
+      if you would rather use a screen of its own.
+    </p>
+  </div>
+</section>
+
+{# ---- faq ------------------------------------------------------------ #}
+{# Native <details> so every answer opens without JavaScript. #}
+<section class="home-section" id="faq" aria-labelledby="faq-title">
+  <div class="home-wrap home-faq__inner">
+    <span class="eyebrow eyebrow--center">FAQ</span>
+    <h2 class="home-section__title" id="faq-title">Common questions</h2>
+    <div class="faq">
+      <details class="faq__item">
+        <summary class="faq__q">Do I need an account to book?</summary>
+        <div class="faq__a">
+          <p>No. Booking is open to everyone. Choose a service and a time, leave
+          your name, a way to reach you and your car's model and registration,
+          and you are done. Your booking
+          reference is all you need afterwards.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Is my appointment confirmed straight away?</summary>
+        <div class="faq__a">
+          <p>An online booking starts as a <strong>pending</strong> request. Our
+          reception team checks it against the workshop schedule and confirms it,
+          and from then on the slot is held for you.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">What do I need to bring?</summary>
+        <div class="faq__a">
+          <p>Just your car and your booking reference. We already have your
+          car's model and registration from the booking, and reception confirms
+          them with you when you check in.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">How much will my repair cost?</summary>
+        <div class="faq__a">
+          <p>Each service shows its base cost in {{ currency }} before you book.
+          The final invoice covers that labour plus any parts the technician had
+          to fit, and you can view it with your booking reference.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">How do I pay?</summary>
+        <div class="faq__a">
+          <p>Once the repair is completed and billed, you choose your payment
+          method on the invoice page. The workshop currently accepts cash,
+          settled at the reception desk when you collect your car.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">Can I cancel or change my booking?</summary>
+        <div class="faq__a">
+          <p>Yes. Call or visit the workshop and reception can cancel a pending
+          or confirmed appointment. To move to another time, cancel and make a
+          new booking for the slot you want.</p>
+        </div>
+      </details>
+      <details class="faq__item">
+        <summary class="faq__q">I lost my booking reference. What now?</summary>
+        <div class="faq__a">
+          <p>Contact the workshop and give us your name and booking details. We
+          will look up your booking and pass the reference back to you.</p>
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
+{# ---- closing call to action ------------------------------------------ #}
+<section class="cta-band" aria-labelledby="cta-title">
+  <div class="home-wrap cta-band__inner">
+    <div>
+      <h2 class="cta-band__title" id="cta-title">Ready when your car is</h2>
+      <p class="cta-band__text">Book a slot in a couple of minutes. Our team will confirm it before you come in.</p>
+    </div>
+    <div class="cta-band__actions">
+      <a class="btn btn--primary btn--lg" href="{% url 'core:booking' %}">Book a repair</a>
+      <a class="btn btn--ghost btn--lg" href="{% url 'core:contact' %}">Contact us</a>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block public_footer %}
+{% include "core/_pubfoot.html" %}
 {% endblock %}
