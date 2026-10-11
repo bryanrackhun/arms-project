@@ -1,0 +1,93 @@
+{% extends "core/base.html" %}
+{% block title %}Audit log — ARMS{% endblock %}
+{% block content %}
+{# Audit trail (NFR2, Administrator only). Read-only by design: the page offers #}
+{# no edit or delete action, and the model refuses both regardless, so what is #}
+{# shown here can be relied on to settle a dispute. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Audit log</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Audit log</h1>
+    <p class="page-head__sub">
+      Who changed which vehicle, job or financial record, and when
+    </p>
+  </div>
+</div>
+
+<section class="card card--filters">
+  <form class="filter-bar" method="get" action="{% url 'core:audit_log' %}">
+    <div class="field">
+      <label class="field__label" for="audit-type">Record type</label>
+      <select class="form-control" id="audit-type" name="type">
+        <option value=""{% if not selected_type %} selected{% endif %}>All records</option>
+        {% for type in record_types %}
+          <option value="{{ type }}"{% if type == selected_type %} selected{% endif %}>{{ type }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Filter</button>
+      {% if selected_type %}
+        <a class="btn btn--ghost" href="{% url 'core:audit_log' %}">Clear</a>
+      {% endif %}
+    </div>
+  </form>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+    </svg>
+    Entries are written automatically when a change is saved and can never be
+    edited or deleted. The newest {{ page_limit }} entries are shown.
+  </p>
+</section>
+
+<section class="card">
+  <header class="card__head">
+    <h2 class="card__title">{{ selected_type|default:"All records" }}</h2>
+    <span class="card__hint">
+      {{ entries|length }} entr{{ entries|length|pluralize:"y,ies" }} — newest first
+    </span>
+  </header>
+
+  <div class="table-wrap">
+    <table class="data">
+      <caption class="sr-only">Audit trail of changes, newest first</caption>
+      <thead>
+        <tr>
+          <th scope="col">When</th>
+          <th scope="col">Staff member</th>
+          <th scope="col">Action</th>
+          <th scope="col">Record</th>
+          <th scope="col">Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+          <tr>
+            <td class="mono">{{ entry.CreatedAt|date:"d M Y H:i" }}</td>
+            <td class="cell-strong">{{ entry.StaffName }}</td>
+            <td><span class="badge badge--muted">{{ entry.Action }}</span></td>
+            <td>
+              {% if entry.record_url %}
+                <a href="{{ entry.record_url }}">{{ entry.RecordType }} #{{ entry.RecordID }}</a>
+              {% else %}
+                {{ entry.RecordType }} #{{ entry.RecordID }}
+              {% endif %}
+            </td>
+            <td>{{ entry.Description }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5">{% include "core/_empty.html" with title="No audit entries yet" hint="Entries appear here as staff create, change or pay for records." %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

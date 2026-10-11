@@ -1240,3 +1240,105 @@ class Invoice(models.Model):
     def subtotal(self) -> Decimal:
         """Labour plus parts, before tax - the figure tax was charged on."""
         return (self.LabourCost + self.PartsCost).quantize(Decimal("0.01"))
+
+
+# ---------------------------------------------------------------------------
+# Audit trail (NFR2, Timebox 4)
+# ---------------------------------------------------------------------------
+# Every change to a vehicle, job or financial record writes one row here: who
+# did it, when, what kind of change it was and which record it touched. The
+# table is append-only. Rows are never edited or deleted, so the history can be
+# used to settle a dispute (a scratch the customer says was not there, a bill
+# someone says was changed) rather than merely describe it.
+#: The kinds of record the audit trail covers: vehicle, job and financial data.
+AUDIT_RECORD_TYPES = [
+    "Vehicle",
+    "Appointment",
+    "Repair",
+    "Inspection",
+    "Parts usage",
+    "Invoice",
+]
+
+#: The actions an entry may describe, kept here so the views and the tests quote
+#: one spelling rather than retyping it.
+AUDIT_CREATED = "Created"
+AUDIT_UPDATED = "Updated"
+AUDIT_CHECKED_IN = "Checked in"
+AUDIT_REASSIGNED = "Reassigned"
+AUDIT_STATUS_CHANGED = "Status changed"
+AUDIT_DELETED = "Deleted"
+AUDIT_PAID = "Paid"
+
+
+class AuditLogQuerySet(models.QuerySet):
+    """Refuse the bulk paths that would bypass ``AuditLog.save``/``delete``.
+
+    ``QuerySet.update`` and ``QuerySet.delete`` write straight to the table
+    without calling the model methods, so a read-only rule enforced only on the
+    instance could be sidestepped with one line. Refusing them here closes that
+    gap for every caller that goes through ``AuditLog.objects``.
+    """
+
+    def update(self, **kwargs):
+        raise ValueError("Audit log entries are read-only and cannot be changed.")
+
+    def delete(self):
+        raise ValueError("Audit log entries are read-only and cannot be deleted.")
+
+
+class AuditLog(models.Model):
+    """A read-only record of one change to a vehicle, job or financial record.
+
+    Entries are only ever added. ``save`` refuses to update an existing row and
+    ``delete`` refuses to remove one, so the history cannot be quietly edited
+    afterwards (NFR2). ``StaffName`` is copied at the time of the change, so the
+    entry still says who did it even if that account is later renamed.
+
+    ``RecordType`` + ``RecordID`` stand in for a foreign key on purpose: one log
+    covers six tables, and the entry for a deleted vehicle has to outlive the
+    vehicle, which a real foreign key would either cascade away or block.
+    """
+
+    AuditID = models.AutoField(primary_key=True, db_column="AuditID")
+    StaffID = models.ForeignKey(
+        Staff,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="StaffID",
+        related_name="audit_entries",
+        help_text="Kept as null if the account is ever removed.",
+    )
+    StaffName = models.CharField(
+        max_length=101,
+        db_column="StaffName",
+        help_text="Copied at the time of the change.",
+    )
+    Action = models.CharField(max_length=30, db_column="Action")
+    RecordType = models.CharField(max_length=30, db_column="RecordType")
+    RecordID = models.IntegerField(db_column="RecordID")
+    Description = models.CharField(max_length=255, db_column="Description")
+    CreatedAt = models.DateTimeField(auto_now_add=True, db_column="CreatedAt")
+
+    objects = AuditLogQuerySet.as_manager()
+
+    class Meta:
+        db_table = "Audit_log"
+        verbose_name = "Audit log entry"
+        verbose_name_plural = "Audit log"
+        ordering = ["-CreatedAt", "-AuditID"]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.CreatedAt:%Y-%m-%d %H:%M} {self.StaffName}: "
+            f"{self.Action} {self.RecordType} #{self.RecordID}"
+        )
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("Audit log entries are read-only and cannot be changed.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Audit log entries are read-only and cannot be deleted.")

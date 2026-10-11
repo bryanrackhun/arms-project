@@ -23,7 +23,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import IntegrityError, transaction
-from django.db.models import DecimalField, F, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.utils import timezone as dj_timezone
 
 from .models import (
@@ -52,12 +52,14 @@ from .models import (
     PAYMENT_METHODS,
     PAYMENT_PAID,
     PAYMENT_PENDING,
+    PAYMENT_STATUSES,
     REFERENCE_CODE_MAX_ATTEMPTS,
     REPAIR_COMPLETED,
     REPAIR_IN_PROGRESS,
     REPAIR_NOT_STARTED,
     REPAIR_PRIORITIES,
     REPAIR_PRIORITY_ROUTINE,
+    REPAIR_PRIORITY_URGENT,
     REPAIR_STATUSES,
     REPAIR_TRANSITIONS,
     TAX_RATE_MAX,
@@ -65,6 +67,7 @@ from .models import (
     TERMINAL_APPOINTMENT_STATUSES,
     CURRENCY_CODE,
     Appointment,
+    AuditLog,
     Inspection,
     Invoice,
     Parts,
@@ -3703,3 +3706,194 @@ def choose_customer_payment_method(reference_code: str, method: str) -> dict:
     if not updated:
         raise ValidationError("This invoice has already been paid.")
     return get_customer_invoice(reference_code)
+
+
+# ---------------------------------------------------------------------------
+# Audit trail (NFR2, Timebox 4)
+# ---------------------------------------------------------------------------
+#   * one entry per successful change to a vehicle, appointment-vehicle link,
+#     repair job, inspection, parts usage line or invoice;
+#   * the staff member is always the signed-in account, never form data;
+#   * writing the entry must never stop the change itself: a failure is logged
+#     to arms_errors.log and the staff member's action still completes.
+# ---------------------------------------------------------------------------
+#: How many entries the audit page shows at once. The newest are what an
+#: administrator investigating a dispute normally needs, and the filter narrows
+#: the list to one record type when older history matters.
+AUDIT_PAGE_LIMIT = 500
+
+
+def record_audit(staff, action: str, record_type: str, record_id: int,
+                 description: str) -> None:
+    """Write one audit entry: who did what to which record, and when.
+
+    A failure is logged rather than raised, so a problem in the audit table
+    never stops staff finishing the work itself. The insert runs in its own
+    savepoint, so a database error here cannot spoil a surrounding transaction
+    either.
+    """
+    try:
+        with transaction.atomic():
+            AuditLog.objects.create(
+                StaffID=staff,
+                StaffName=staff.full_name if staff else "System",
+                Action=action,
+                RecordType=record_type,
+                RecordID=record_id,
+                Description=(description or "")[:255],
+            )
+    except Exception:  # noqa: BLE001 - the audit must never break the action
+        logger.exception(
+            "Could not write audit entry for %s #%s", record_type, record_id
+        )
+
+
+def list_audit_entries(record_type: str = "") -> list[AuditLog]:
+    """Newest-first audit entries, optionally limited to one record type."""
+    entries = AuditLog.objects.all()
+    if record_type:
+        entries = entries.filter(RecordType=record_type)
+    return list(entries[:AUDIT_PAGE_LIMIT])
+
+
+# ---------------------------------------------------------------------------
+# Business reports (FR15, Timebox 4)
+# ---------------------------------------------------------------------------
+#   * nothing is stored: every figure is aggregated from the existing tables on
+#     request, so the report can never disagree with the screens it summarises;
+#   * the date rules match payroll - a job counts in the period it was
+#     *completed*, revenue by when the invoice was *generated*, payments by when
+#     they were *received*, appointments by their *appointment date* and parts
+#     by when they were *used*;
+#   * money still owed is reported for all time, because a bill is owed
+#     whenever it was raised;
+#   * every figure is a database aggregate (Count/Sum) rather than a Python
+#     loop over rows, so the page stays fast as the history grows (NFR4).
+# ---------------------------------------------------------------------------
+#: How many rows the "most requested services" and "most used parts" tables show.
+REPORT_TOP_N = 5
+
+
+def build_business_report(start_date, end_date) -> dict:
+    """Return the business report figures for an inclusive date range (FR15).
+
+    Read-only: every figure is aggregated from stored records in the database,
+    so the report always agrees with the screens it summarises. It uses the
+    same date rules as payroll - a job belongs to the period it was completed in.
+    """
+    start, end = _validate_payroll_range(start_date, end_date)
+
+    # Job volume
+    appointments = Appointment.objects.filter(
+        AppointmentDate__gte=start, AppointmentDate__lte=end
+    )
+    appointments_by_status = list(
+        appointments.values("Status")
+        .annotate(count=Count("AppointmentID"))
+        .order_by("-count", "Status")
+    )
+    completed = Repair.objects.filter(
+        Status=REPAIR_COMPLETED,
+        CompletedAt__isnull=False,
+        CompletedAt__date__gte=start,
+        CompletedAt__date__lte=end,
+    )
+    completed_count = completed.count()
+    urgent_count = completed.filter(RepairPriority=REPAIR_PRIORITY_URGENT).count()
+
+    # Revenue (invoices generated in the period)
+    invoiced = Invoice.objects.filter(
+        GeneratedAt__date__gte=start, GeneratedAt__date__lte=end
+    ).aggregate(
+        count=Count("InvoiceID"),
+        total=Sum("TotalAmount"),
+        labour=Sum("LabourCost"),
+        parts=Sum("PartsCost"),
+        tax=Sum("TaxAmount"),
+    )
+    invoice_count = invoiced["count"] or 0
+    invoice_total = _money(invoiced["total"] or 0)
+    average_invoice = (
+        _money(invoice_total / invoice_count) if invoice_count else _money(0)
+    )
+
+    # Payments received in the period, by the date the money came in
+    received = Invoice.objects.filter(
+        PaymentStatus=PAYMENT_PAID,
+        PaidAt__isnull=False,
+        PaidAt__date__gte=start,
+        PaidAt__date__lte=end,
+    ).aggregate(count=Count("InvoiceID"), total=Sum("TotalAmount"))
+
+    # Outstanding (all time - money owed is owed whenever it was billed)
+    unpaid_count = Invoice.objects.filter(PaymentStatus=PAYMENT_PENDING).count()
+
+    # Service popularity
+    top_services = list(
+        completed.values(name=F("AppointmentID__ServiceCode__ServiceName"))
+        .annotate(jobs=Count("RepairID"))
+        .order_by("-jobs", "name")[:REPORT_TOP_N]
+    )
+
+    # Technician workload. Grouped on the technician id as well as the name, so
+    # two technicians who happen to share a name are not merged into one row.
+    technician_jobs = list(
+        completed.filter(TechnicianID__isnull=False)
+        .values(
+            "TechnicianID",
+            first=F("TechnicianID__StaffID__FirstName"),
+            last=F("TechnicianID__StaffID__LastName"),
+        )
+        .annotate(jobs=Count("RepairID"))
+        .order_by("-jobs", "first", "last")
+    )
+
+    # Stock health. Value is quantity x the unit price frozen on each usage line,
+    # the same figure the invoice was built from.
+    line_value = ExpressionWrapper(
+        F("Qty_Used") * F("Unit_Price"),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+    top_parts = list(
+        PartsUsage.objects.filter(UsedAt__date__gte=start, UsedAt__date__lte=end)
+        .values(name=F("PartID__PartName"))
+        .annotate(quantity=Sum("Qty_Used"), value=Sum(line_value))
+        .order_by("-quantity", "name")[:REPORT_TOP_N]
+    )
+    for row in top_parts:
+        row["value"] = _money(row["value"] or 0)
+
+    received_count = received["count"] or 0
+    has_data = bool(
+        appointments_by_status
+        or completed_count
+        or invoice_count
+        or received_count
+        or top_parts
+    )
+
+    return {
+        "start_date": start,
+        "end_date": end,
+        "appointments_total": sum(r["count"] for r in appointments_by_status),
+        "appointments_by_status": appointments_by_status,
+        "completed_jobs": completed_count,
+        "urgent_jobs": urgent_count,
+        "routine_jobs": completed_count - urgent_count,
+        "invoice_count": invoice_count,
+        "invoice_total": invoice_total,
+        "labour_total": _money(invoiced["labour"] or 0),
+        "parts_total": _money(invoiced["parts"] or 0),
+        "tax_total": _money(invoiced["tax"] or 0),
+        "average_invoice": average_invoice,
+        "received_count": received_count,
+        "received_total": _money(received["total"] or 0),
+        "outstanding_total": total_outstanding_invoices(),
+        "unpaid_count": unpaid_count,
+        "top_services": top_services,
+        "technician_jobs": technician_jobs,
+        "low_stock_count": count_low_stock_parts(),
+        "top_parts": top_parts,
+        "has_data": has_data,
+        "message": "" if has_data else "No activity was recorded in this period.",
+    }

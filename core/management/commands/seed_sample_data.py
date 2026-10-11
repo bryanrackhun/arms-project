@@ -21,6 +21,8 @@ Tables covered, with the number of rows added:
 * Parts ............. 6
 * Parts_usage ....... 5
 * Invoices .......... 3  (2 Paid, 1 Pending)
+* Audit_log ......... the history behind every job on file, rebuilt by
+                      ``seed_audit_log`` once the rows above exist
 
 All sample reference codes start with ``SMP`` so they are easy to type into the
 public "check repair status" page during a demonstration.
@@ -38,6 +40,7 @@ from datetime import datetime, time as dt_time, timedelta
 from decimal import Decimal
 
 from django.contrib.auth.hashers import make_password
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone as dj_timezone
@@ -263,6 +266,9 @@ class Command(BaseCommand):
             self._parts_usage(repairs, parts, staff)
             self._invoices(repairs, staff)
             self._refresh_bays()
+        # The audit trail (NFR2) is reconstructed from the rows just written, so
+        # the audit page has history to show without anyone clicking through.
+        call_command("seed_audit_log", stdout=self.stdout)
         self.stdout.write(self.style.SUCCESS(
             f"Sample data loaded. Staff password for every sample account: "
             f"{SAMPLE_PASSWORD}"

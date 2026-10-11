@@ -4,6 +4,7 @@ from django.contrib import admin
 
 from .models import (
     Appointment,
+    AuditLog,
     Inspection,
     Repair,
     Role,
@@ -133,3 +134,25 @@ class RepairAdmin(admin.ModelAdmin):
     # customer_name is read through the appointment, not stored on the job.
     readonly_fields = ("customer_name", "CreatedAt", "UpdatedAt")
 
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    """Browse-only: the audit trail is append-only (NFR2).
+
+    Entries are written by the application as changes happen, so the admin site
+    may list them but never add, change or delete one - otherwise the superuser
+    screens would be a back door around the rule the model itself enforces.
+    """
+
+    list_display = ("CreatedAt", "StaffName", "Action", "RecordType", "RecordID")
+    list_filter = ("RecordType", "Action")
+    search_fields = ("StaffName", "Description")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

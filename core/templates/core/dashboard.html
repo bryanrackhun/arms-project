@@ -282,28 +282,4 @@
     </div>
   </section>
 {% endif %}
-
-<section class="card">
-  <header class="card__head">
-    <h2 class="card__title">Later phases</h2>
-    <span class="card__hint">Available once their tables exist</span>
-  </header>
-  <ul class="module-grid">
-    {% for name, phase in future_modules %}
-      <li class="module">
-        <span class="module__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-            <rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
-          </svg>
-        </span>
-        <span class="module__body">
-          <span class="module__name">{{ name }}</span>
-          <span class="module__phase">{{ phase }}</span>
-        </span>
-        <span class="badge badge--muted">Planned</span>
-      </li>
-    {% endfor %}
-  </ul>
-</section>
 {% endblock %}

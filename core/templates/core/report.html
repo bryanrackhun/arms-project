@@ -1,0 +1,281 @@
+{% extends "core/base.html" %}
+{% block title %}Reports — ARMS{% endblock %}
+{% block content %}
+{# Business report (FR15, Administrator only). Every figure is aggregated from #}
+{# the records already stored - nothing is typed in and nothing is saved - so #}
+{# the same period can be re-run at any time and always matches the invoice, #}
+{# repair, parts and payroll screens. Bars are proportions of the largest row; #}
+{# the number beside each one is what carries the meaning. #}
+<div class="page-head">
+  <div class="page-head__text">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol class="crumbs__list">
+        <li><a class="crumbs__link" href="{% url 'core:dashboard' %}">Home</a></li>
+        <li><span class="crumbs__current" aria-current="page">Reports</span></li>
+      </ol>
+    </nav>
+    <h1 class="page-head__title">Business report</h1>
+    <p class="page-head__sub">
+      {% if report %}
+        {{ report.start_date|date:"d M Y" }} – {{ report.end_date|date:"d M Y" }}
+      {% else %}
+        Job volume, revenue, popular services, workload and stock for a chosen period
+      {% endif %}
+    </p>
+  </div>
+</div>
+
+<section class="card card--filters">
+  <form class="filter-bar" method="get" action="{% url 'core:reports' %}" novalidate>
+    {% if form.non_field_errors %}
+      <div class="alert alert--error" role="alert">
+        <span class="alert__icon" aria-hidden="true">&#10005;</span>
+        <div class="alert__body">
+          {% for error in form.non_field_errors %}<p class="alert__text">{{ error }}</p>{% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="form-grid form-grid--inline">
+      {% include "core/_field.html" with field=form.start_date %}
+      {% include "core/_field.html" with field=form.end_date %}
+    </div>
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Generate report</button>
+      {% if form.is_bound %}
+        <a class="btn btn--ghost" href="{% url 'core:reports' %}">Reset to this month</a>
+      {% endif %}
+    </div>
+  </form>
+
+  <p class="note">
+    <svg class="note__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
+    </svg>
+    Jobs count in the period they were <strong>completed</strong>, revenue by the
+    date the invoice was <strong>generated</strong>, and payments by the date they
+    were <strong>received</strong>. Outstanding money is shown for all time.
+  </p>
+</section>
+
+{% if report %}
+  {% if report.message %}
+    <div class="alert alert--info" role="status">
+      <span class="alert__icon" aria-hidden="true">&#8505;</span>
+      <div class="alert__body">
+        <p class="alert__text">{{ report.message }}</p>
+      </div>
+    </div>
+  {% endif %}
+
+  {# ---- headline figures ---- #}
+  <div class="stats">
+    <article class="stat stat--brand">
+      <div class="stat__num">{{ report.completed_jobs }}</div>
+      <div class="stat__lbl">Completed job{{ report.completed_jobs|pluralize }}</div>
+      <div class="stat__meta">{{ report.urgent_jobs }} urgent, {{ report.routine_jobs }} routine</div>
+    </article>
+    <article class="stat">
+      <div class="stat__num">{{ currency }} {{ report.invoice_total }}</div>
+      <div class="stat__lbl">Invoiced</div>
+      <div class="stat__meta">
+        {{ report.invoice_count }} invoice{{ report.invoice_count|pluralize }},
+        average {{ currency }} {{ report.average_invoice }}
+      </div>
+    </article>
+    <article class="stat">
+      <div class="stat__num">{{ currency }} {{ report.received_total }}</div>
+      <div class="stat__lbl">Payments received</div>
+      <div class="stat__meta">{{ report.received_count }} invoice{{ report.received_count|pluralize }} paid in this period</div>
+    </article>
+    <article class="stat">
+      <div class="stat__num">{{ currency }} {{ report.outstanding_total }}</div>
+      <div class="stat__lbl">Outstanding</div>
+      <div class="stat__meta">
+        <a class="stat__link" href="{% url 'core:invoice_list' %}?payment_status=Pending">{{ report.unpaid_count }} unpaid invoice{{ report.unpaid_count|pluralize }}</a>
+        (all time)
+      </div>
+    </article>
+  </div>
+
+  <div class="report-grid">
+    {# ---- revenue ---- #}
+    <section class="card">
+      <header class="card__head">
+        <h2 class="card__title">Revenue breakdown</h2>
+        <span class="card__hint">Invoices generated in the period</span>
+      </header>
+      <div class="table-wrap">
+        <table class="data">
+          <caption class="sr-only">Invoiced revenue split into labour, parts and tax</caption>
+          <thead>
+            <tr>
+              <th scope="col">Component</th>
+              <th scope="col" class="num">Amount</th>
+              <th scope="col"><span class="sr-only">Share of total</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Labour</th>
+              <td class="num">{{ currency }} {{ report.labour_total }}</td>
+              <td class="cell-bar"><span class="bar" aria-hidden="true"><span class="bar__fill" style="width:{% widthratio report.labour_total report.invoice_total 100 %}%"></span></span></td>
+            </tr>
+            <tr>
+              <th scope="row">Parts</th>
+              <td class="num">{{ currency }} {{ report.parts_total }}</td>
+              <td class="cell-bar"><span class="bar" aria-hidden="true"><span class="bar__fill" style="width:{% widthratio report.parts_total report.invoice_total 100 %}%"></span></span></td>
+            </tr>
+            <tr>
+              <th scope="row">Tax</th>
+              <td class="num">{{ currency }} {{ report.tax_total }}</td>
+              <td class="cell-bar"><span class="bar" aria-hidden="true"><span class="bar__fill" style="width:{% widthratio report.tax_total report.invoice_total 100 %}%"></span></span></td>
+            </tr>
+            <tr>
+              <th scope="row" class="cell-strong">Total</th>
+              <td class="num cell-strong">{{ currency }} {{ report.invoice_total }}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {# ---- job volume ---- #}
+    <section class="card">
+      <header class="card__head">
+        <h2 class="card__title">Appointments by status</h2>
+        <span class="card__hint">{{ report.appointments_total }} booked for dates in the period</span>
+      </header>
+      <div class="table-wrap">
+        <table class="data">
+          <caption class="sr-only">Appointments in the period grouped by their current status</caption>
+          <thead>
+            <tr>
+              <th scope="col">Status</th>
+              <th scope="col" class="num">Appointments</th>
+              <th scope="col"><span class="sr-only">Proportion</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in report.appointments_by_status %}
+              <tr>
+                <th scope="row">{{ row.Status }}</th>
+                <td class="num">{{ row.count }}</td>
+                <td class="cell-bar"><span class="bar" aria-hidden="true"><span class="bar__fill" style="width:{% widthratio row.count report.appointments_total 100 %}%"></span></span></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="3">{% include "core/_empty.html" with title="No appointments in this period" %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="report-grid">
+    {# ---- service popularity ---- #}
+    <section class="card">
+      <header class="card__head">
+        <h2 class="card__title">Most requested services</h2>
+        <span class="card__hint">Top 5 by completed jobs</span>
+      </header>
+      <div class="table-wrap">
+        <table class="data">
+          <caption class="sr-only">Services ranked by repair jobs completed in the period</caption>
+          <thead>
+            <tr>
+              <th scope="col">Service</th>
+              <th scope="col" class="num">Jobs</th>
+              <th scope="col"><span class="sr-only">Proportion</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in report.top_services %}
+              <tr>
+                <th scope="row">{{ row.name }}</th>
+                <td class="num">{{ row.jobs }}</td>
+                <td class="cell-bar"><span class="bar" aria-hidden="true"><span class="bar__fill" style="width:{% widthratio row.jobs report.top_services.0.jobs 100 %}%"></span></span></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="3">{% include "core/_empty.html" with title="No completed jobs in this period" %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {# ---- technician workload ---- #}
+    <section class="card">
+      <header class="card__head">
+        <h2 class="card__title">Technician workload</h2>
+        <span class="card__hint">Completed jobs per technician</span>
+      </header>
+      <div class="table-wrap">
+        <table class="data">
+          <caption class="sr-only">Repair jobs completed by each technician in the period</caption>
+          <thead>
+            <tr>
+              <th scope="col">Technician</th>
+              <th scope="col" class="num">Jobs</th>
+              <th scope="col"><span class="sr-only">Proportion</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in report.technician_jobs %}
+              <tr>
+                <th scope="row">{{ row.first }} {{ row.last }}</th>
+                <td class="num">{{ row.jobs }}</td>
+                <td class="cell-bar"><span class="bar" aria-hidden="true"><span class="bar__fill bar__fill--ok" style="width:{% widthratio row.jobs report.technician_jobs.0.jobs 100 %}%"></span></span></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="3">{% include "core/_empty.html" with title="No completed jobs in this period" %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  {# ---- stock health ---- #}
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Stock health</h2>
+      <span class="card__hint">
+        {% if report.low_stock_count %}
+          {{ report.low_stock_count }} part{{ report.low_stock_count|pluralize }} at or below reorder level —
+          <a href="{% url 'core:part_low_stock' %}">view low stock</a>
+        {% else %}
+          No parts are at or below their reorder level
+        {% endif %}
+      </span>
+    </header>
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">Top 5 parts used in the period by quantity, with their value at the price charged</caption>
+        <thead>
+          <tr>
+            <th scope="col">Part</th>
+            <th scope="col" class="num">Quantity used</th>
+            <th scope="col" class="num">Value</th>
+            <th scope="col"><span class="sr-only">Proportion</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in report.top_parts %}
+            <tr>
+              <th scope="row">{{ row.name }}</th>
+              <td class="num">{{ row.quantity }}</td>
+              <td class="num">{{ currency }} {{ row.value }}</td>
+              <td class="cell-bar"><span class="bar" aria-hidden="true"><span class="bar__fill bar__fill--warn" style="width:{% widthratio row.quantity report.top_parts.0.quantity 100 %}%"></span></span></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4">{% include "core/_empty.html" with title="No parts used in this period" %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+{% endblock %}

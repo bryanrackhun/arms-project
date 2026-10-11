@@ -2173,3 +2173,40 @@ body.page-home{
 .pay-option__name{font-weight:700}
 .pay-option__hint{color:var(--muted);font-size:13px}
 .pay-option--off{cursor:not-allowed;background:var(--card-alt);opacity:.6}
+
+
+/* =====================================================================
+   Business report (FR15)
+   Proportion bars are plain CSS rather than a chart library: no CDN script
+   to load, and the figure is always printed beside the bar, so the bar is
+   decoration (aria-hidden) and the number carries the meaning (NFR3).
+   ===================================================================== */
+.report-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:var(--space-5);
+  margin-bottom:var(--space-5);
+}
+.report-grid > .card{margin-bottom:0}
+@media (max-width:900px){
+  .report-grid{grid-template-columns:minmax(0,1fr)}
+}
+
+.bar{
+  display:block;
+  width:100%;
+  min-width:80px;
+  height:8px;
+  background:var(--line-soft);
+  border-radius:999px;
+  overflow:hidden;
+}
+.bar__fill{
+  display:block;
+  height:100%;
+  background:var(--brand);
+  border-radius:inherit;
+}
+.bar__fill--ok{background:var(--ok)}
+.bar__fill--warn{background:var(--warn)}
+td.cell-bar{width:40%}

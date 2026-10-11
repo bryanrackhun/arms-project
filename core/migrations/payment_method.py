@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0006_timebox4_parts_invoices'),
+        ('core', 'parts_and_invoices'),
     ]
 
     operations = [

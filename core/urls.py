@@ -28,6 +28,8 @@ Route protection:
     * ``invoices/*`` are Receptionist and Administrator (``invoice_staff``). A
       Technician cannot view invoices at all.
     * ``payroll/`` is Administrator-only (``payroll_manager``).
+    * ``reports/`` (FR15) and ``audit-log/`` (NFR2) are Administrator-only
+      (``admin_only``).
     * ``repair-status/`` is public: the customer has no account, and the booking
       reference is the only credential that page asks for. The same holds for
       ``repair-status/<reference>/invoice/`` and ``.../pay/``, which show a
@@ -278,6 +280,10 @@ urlpatterns = [
 
     # technician payroll (Administrator)
     path("payroll/", views.payroll_view, name="payroll"),
+
+    # business reports (FR15) and the audit log (NFR2), Administrator only
+    path("reports/", views.report_view, name="reports"),
+    path("audit-log/", views.audit_log_view, name="audit_log"),
 
     # public repair-progress lookup (no login: the customer has no account)
     path("repair-status/", views.repair_status_lookup_view, name="repair_status_lookup"),

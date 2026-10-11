@@ -62,6 +62,7 @@ from .forms import (
     RepairForm,
     RepairStatusForm,
     RepairStatusLookupForm,
+    ReportForm,
     ServiceAssignmentForm,
     ServiceBayForm,
     ServiceForm,
@@ -78,6 +79,14 @@ from .models import (
     APPOINTMENT_PENDING,
     APPOINTMENT_STATUSES,
     APPOINTMENT_TRANSITIONS,
+    AUDIT_CHECKED_IN,
+    AUDIT_CREATED,
+    AUDIT_DELETED,
+    AUDIT_PAID,
+    AUDIT_REASSIGNED,
+    AUDIT_RECORD_TYPES,
+    AUDIT_STATUS_CHANGED,
+    AUDIT_UPDATED,
     BAY_AVAILABLE,
     BAY_OCCUPIED,
     CURRENCY_CODE,
@@ -281,9 +290,6 @@ def dashboard_view(request):
     Administrators see management links and the staff/technician/service
     counts. Every other role sees only their own profile, so the page never
     offers a link that would immediately bounce to the access-denied screen.
-
-    Modules from later phases are listed but disabled, because their tables do
-    not exist yet.
     """
     identity = _identity(request)
     role_name = identity["role_name"] if identity else ""
@@ -340,14 +346,9 @@ def dashboard_view(request):
             .order_by("RoleID__RoleName")
         ),
         # Everything with a requirement and a table has a screen now: Timebox 4
-        # added the parts catalogue, invoices and payroll. What is left is the
-        # work that has no screen at all - FR13 (multi-branch) is out of scope,
-        # and reporting has no requirement in Chapter 5, so it would need an
-        # FR15 before it could be built.
-        "future_modules": [
-            ("Multi-branch", "Out of scope"),
-            ("Reports", "Needs FR15"),
-        ],
+        # added the parts catalogue, invoices, payroll, business reports (FR15)
+        # and the audit log (NFR2). FR13 (multi-branch) is out of scope and no
+        # longer appears anywhere on the dashboard.
     }
     return render(request, "core/dashboard.html", context)
 
@@ -1298,6 +1299,7 @@ def appointment_match_vehicle_view(request, appointment_id: int):
     form = MatchVehicleForm(request.POST, appointment=appointment)
     if form.is_valid():
         vehicle = form.cleaned_data["vehicle"]
+        previous = appointment.VehicleID
         try:
             appointment = services.match_vehicle_to_appointment(
                 appointment_id,
@@ -1307,6 +1309,16 @@ def appointment_match_vehicle_view(request, appointment_id: int):
         except ServiceError as error:
             _service_error(request, error)
         else:
+            services.record_audit(
+                _current_staff(request), AUDIT_UPDATED, "Appointment",
+                appointment.pk,
+                (
+                    f"Vehicle changed from {previous.display_name} to "
+                    f"{vehicle.display_name}."
+                    if previous is not None and previous.pk != vehicle.pk
+                    else f"Vehicle {vehicle.display_name} linked."
+                ),
+            )
             messages.success(
                 request,
                 f"Vehicle {vehicle.display_name} linked to appointment "
@@ -1362,6 +1374,10 @@ def vehicle_create_view(request):
             except ServiceError as error:
                 _service_error(request, error)
             else:
+                services.record_audit(
+                    _current_staff(request), AUDIT_CREATED, "Vehicle",
+                    vehicle.VehicleID, f"Vehicle {vehicle.display_name} recorded.",
+                )
                 messages.success(request, f"Vehicle {vehicle.display_name} recorded.")
                 return redirect("core:vehicle_detail", vehicle_id=vehicle.VehicleID)
         else:
@@ -1399,6 +1415,15 @@ def vehicle_check_in_view(request):
             except ServiceError as error:
                 _service_error(request, error)
             else:
+                services.record_audit(
+                    _current_staff(request), AUDIT_CHECKED_IN, "Vehicle",
+                    vehicle.VehicleID,
+                    (
+                        f"New vehicle {vehicle.display_name} recorded and checked in."
+                        if created
+                        else f"Existing vehicle {vehicle.display_name} checked in."
+                    ),
+                )
                 messages.success(
                     request,
                     (
@@ -1484,6 +1509,12 @@ def vehicle_edit_view(request, vehicle_id: int):
             except ServiceError as error:
                 _service_error(request, error)
             else:
+                services.record_audit(
+                    _current_staff(request), AUDIT_UPDATED, "Vehicle",
+                    vehicle.VehicleID,
+                    f"Vehicle details updated for {vehicle.display_name}"
+                    f"{' (photo replaced)' if image else ''}.",
+                )
                 messages.success(request, f"Vehicle {vehicle.display_name} updated.")
                 return redirect("core:vehicle_detail", vehicle_id=vehicle.VehicleID)
         else:
@@ -1506,6 +1537,10 @@ def vehicle_edit_view(request, vehicle_id: int):
 @require_POST
 def vehicle_delete_view(request, vehicle_id: int):
     """Delete a vehicle, but only when it has no appointment history."""
+    # Read the label before the row disappears, so the audit entry can still
+    # say which vehicle it was.
+    vehicle = Vehicle.objects.filter(pk=vehicle_id).first()
+    label = vehicle.display_name if vehicle else f"#{vehicle_id}"
     try:
         services.delete_vehicle(vehicle_id)
     except NotFoundError as error:
@@ -1513,6 +1548,10 @@ def vehicle_delete_view(request, vehicle_id: int):
     except ServiceError as error:
         _service_error(request, error)
     else:
+        services.record_audit(
+            _current_staff(request), AUDIT_DELETED, "Vehicle", vehicle_id,
+            f"Vehicle {label} deleted.",
+        )
         messages.success(request, "Vehicle record deleted.")
     return redirect("core:vehicle_list")
 
@@ -1768,6 +1807,12 @@ def repair_create_view(request):
                     if outstanding
                     else ""
                 )
+                services.record_audit(
+                    _current_staff(request), AUDIT_CREATED, "Repair", repair.pk,
+                    f"Repair job created for appointment {appointment.pk} "
+                    f"({repair.service.ServiceName}, {repair.RepairPriority} "
+                    f"priority).",
+                )
                 messages.success(
                     request,
                     f"Repair job #{repair.pk} created for "
@@ -1889,6 +1934,7 @@ def repair_status_view(request, repair_id: int):
             "assigned to you.",
         )
 
+    old_status = repair.Status
     form = RepairStatusForm(request.POST, repair=repair)
     if form.is_valid():
         try:
@@ -1898,6 +1944,10 @@ def repair_status_view(request, repair_id: int):
         except ServiceError as error:
             _service_error(request, error)
         else:
+            services.record_audit(
+                staff, AUDIT_STATUS_CHANGED, "Repair", repair.pk,
+                f"Status changed from {old_status} to {repair.Status}.",
+            )
             message = f"Repair job #{repair.pk} is now {repair.Status.lower()}."
             if repair.is_completed:
                 # Say so explicitly: releasing the bay is the part an
@@ -1958,6 +2008,12 @@ def repair_assign_view(request, repair_id: int):
                 "Choose a technician or a service bay to change the assignment.",
             )
             return redirect("core:repair_detail", repair_id=repair_id)
+        # The previous holders, read before the change, so the audit entry can
+        # say what the job was moved *from* as well as to.
+        old_technician = (
+            repair.TechnicianID.full_name if repair.TechnicianID else "unassigned"
+        )
+        old_bay = repair.BayID.BayName if repair.BayID else "no bay"
         try:
             repair = services.update_repair_assignment(
                 repair_id,
@@ -1968,10 +2024,20 @@ def repair_assign_view(request, repair_id: int):
             _service_error(request, error)
         else:
             changed = []
+            moves = []
             if technician is not None:
                 changed.append(f"technician {technician.full_name}")
+                moves.append(
+                    f"Technician changed from {old_technician} to "
+                    f"{technician.full_name}."
+                )
             if bay is not None:
                 changed.append(f"bay {bay.BayName}")
+                moves.append(f"Bay changed from {old_bay} to {bay.BayName}.")
+            services.record_audit(
+                _current_staff(request), AUDIT_REASSIGNED, "Repair", repair.pk,
+                " ".join(moves),
+            )
             messages.success(
                 request,
                 f"Repair job #{repair.pk} assigned to {' and '.join(changed)}.",
@@ -2038,6 +2104,12 @@ def inspection_create_view(request, repair_id: int):
             except ServiceError as error:
                 _service_error(request, error)
             else:
+                services.record_audit(
+                    staff, AUDIT_CREATED, "Inspection", inspection.pk,
+                    f"Inspection recorded for repair job #{repair.pk} "
+                    f"({inspection.image_count} image"
+                    f"{'' if inspection.image_count == 1 else 's'}).",
+                )
                 messages.success(
                     request,
                     f"Inspection recorded for repair job #{repair.pk} "
@@ -2103,6 +2175,12 @@ def inspection_edit_view(request, repair_id: int):
             except ServiceError as error:
                 _service_error(request, error)
             else:
+                added = len(form.uploaded_images())
+                services.record_audit(
+                    staff, AUDIT_UPDATED, "Inspection", inspection.pk,
+                    f"Inspection for repair job #{repair.pk} updated"
+                    f"{f' ({added} image(s) added)' if added else ''}.",
+                )
                 messages.success(
                     request,
                     f"Inspection for repair job #{repair.pk} updated.",
@@ -2631,6 +2709,11 @@ def repair_parts_record_view(request, repair_id: int):
         except ServiceError as error:
             _service_error(request, error)
         else:
+            services.record_audit(
+                staff, AUDIT_CREATED, "Parts usage", usage.pk,
+                f"{usage.Qty_Used} x {updated.PartName} at {CURRENCY_CODE} "
+                f"{usage.Unit_Price} recorded against repair job #{repair.pk}.",
+            )
             message = (
                 f"{usage.Qty_Used} x {updated.PartName} recorded against job "
                 f"#{repair.pk}. {updated.StockQty} left in stock."
@@ -2673,6 +2756,10 @@ def repair_parts_remove_view(request, repair_id: int, usage_id: int):
         return redirect("core:repair_list")
 
     staff = _current_staff(request)
+    # Described before the delete, since the line will not exist afterwards.
+    usage = (
+        PartsUsage.objects.select_related("PartID").filter(pk=usage_id).first()
+    )
     try:
         services.remove_parts_usage(usage_id, staff)
     except NotFoundError as error:
@@ -2680,6 +2767,13 @@ def repair_parts_remove_view(request, repair_id: int, usage_id: int):
     except ServiceError as error:
         _service_error(request, error)
     else:
+        services.record_audit(
+            staff, AUDIT_DELETED, "Parts usage", usage_id,
+            f"{usage.Qty_Used} x {usage.PartID.PartName} removed from repair job "
+            f"#{usage.RepairID_id}; stock returned."
+            if usage is not None
+            else f"Parts usage removed from repair job #{repair.pk}.",
+        )
         messages.success(
             request,
             f"Parts usage entry removed from job #{repair.pk} and the stock "
@@ -2791,6 +2885,13 @@ def invoice_generate_view(request, repair_id: int):
             except ServiceError as error:
                 _service_error(request, error)
             else:
+                services.record_audit(
+                    staff, AUDIT_CREATED, "Invoice", invoice.pk,
+                    f"Invoice generated for repair job #{repair.pk}: labour "
+                    f"{invoice.LabourCost}, parts {invoice.PartsCost}, tax "
+                    f"{invoice.TaxRate}% ({invoice.TaxAmount}), total "
+                    f"{CURRENCY_CODE} {invoice.TotalAmount}.",
+                )
                 messages.success(
                     request,
                     f"Invoice #{invoice.pk} generated for {repair.customer_name}: "
@@ -2873,14 +2974,20 @@ def invoice_pay_view(request, invoice_id: int):
     already-Paid invoice is enforced in the service layer, which is what makes a
     Paid invoice final (T4-INV-27) - there is no path back to Pending.
     """
+    staff = _current_staff(request)
     try:
-        invoice = services.mark_invoice_paid(invoice_id, _current_staff(request))
+        invoice = services.mark_invoice_paid(invoice_id, staff)
     except NotFoundError as error:
         messages.error(request, str(error))
         return redirect("core:invoice_list")
     except ServiceError as error:
         _service_error(request, error)
     else:
+        services.record_audit(
+            staff, AUDIT_PAID, "Invoice", invoice.pk,
+            f"Invoice marked Paid ({invoice.PaymentMethod or 'method not recorded'}, "
+            f"total {CURRENCY_CODE} {invoice.TotalAmount}).",
+        )
         messages.success(
             request,
             f"Invoice #{invoice.pk} marked Paid for "
@@ -2952,6 +3059,91 @@ def payroll_view(request):
             "technicians": Technician.objects.select_related("StaffID"),
             "default_start": default_start,
             "default_end": default_end,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Business reports (FR15, Administrator only)
+# ---------------------------------------------------------------------------
+@require_auth
+@admin_only
+def report_view(request):
+    """Business report for a chosen period; the current month by default.
+
+    Like payroll, a GET with dates runs the calculation and nothing is stored, so
+    a report is linkable and always reflects the data as it stands. An invalid
+    range is a form error and shows no report, because "the dates were typed
+    backwards" must not read as "the workshop was idle".
+    """
+    form = ReportForm(request.GET or None)
+    start = end = None
+    if form.is_bound:
+        if form.is_valid():
+            start = form.cleaned_data["start_date"]
+            end = form.cleaned_data["end_date"]
+    else:
+        start, end = services.default_payroll_range()
+
+    report = None
+    if start and end:
+        try:
+            report = services.build_business_report(start, end)
+        except ServiceError as error:
+            _service_error(request, error)
+
+    return render(
+        request,
+        "core/report.html",
+        {"identity": _identity(request), "form": form, "report": report},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit log (NFR2, Administrator only)
+# ---------------------------------------------------------------------------
+#: Where an entry's record can be opened, keyed by record type. Inspections and
+#: parts usage lines have no page of their own, and a deleted record has
+#: nothing left to open, so those entries are shown without a link.
+AUDIT_RECORD_URLS = {
+    "Vehicle": "core:vehicle_detail",
+    "Appointment": "core:appointment_detail",
+    "Repair": "core:repair_detail",
+    "Invoice": "core:invoice_detail",
+}
+
+
+@require_auth
+@admin_only
+def audit_log_view(request):
+    """Read-only list of changes to vehicle, job and financial records.
+
+    There is deliberately no edit or delete action anywhere on this page, and
+    the model refuses both regardless. An unknown record type in the query
+    string is treated as "All records" rather than an error.
+    """
+    record_type = request.GET.get("type", "")
+    if record_type not in AUDIT_RECORD_TYPES:
+        record_type = ""
+
+    entries = services.list_audit_entries(record_type)
+    for entry in entries:
+        url_name = AUDIT_RECORD_URLS.get(entry.RecordType)
+        entry.record_url = (
+            reverse(url_name, args=[entry.RecordID])
+            if url_name and entry.Action != AUDIT_DELETED
+            else ""
+        )
+
+    return render(
+        request,
+        "core/audit_log.html",
+        {
+            "identity": _identity(request),
+            "entries": entries,
+            "record_types": AUDIT_RECORD_TYPES,
+            "selected_type": record_type,
+            "page_limit": services.AUDIT_PAGE_LIMIT,
         },
     )
 

@@ -17,7 +17,7 @@ def backfill_cash(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("core", "0007_invoice_payment_method"),
+        ("core", "payment_method"),
     ]
 
     operations = [

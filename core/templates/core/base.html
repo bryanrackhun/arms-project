@@ -70,6 +70,9 @@
             {# payroll reports what the workshop owes its own staff (Timebox 4) #}
             <li><a class="topnav__link{% if current == 'payroll' %} is-active{% endif %}"
                    href="{% url 'core:payroll' %}"{% if current == 'payroll' %} aria-current="page"{% endif %}>Payroll</a></li>
+            {# business reports summarise the stored records for a period (FR15) #}
+            <li><a class="topnav__link{% if current == 'reports' %} is-active{% endif %}"
+                   href="{% url 'core:reports' %}"{% if current == 'reports' %} aria-current="page"{% endif %}>Reports</a></li>
           {% endif %}
           {% if identity.role_name == 'Technician' %}
             {# a technician's whole view of this module: their own jobs (Timebox 3) #}
@@ -92,6 +95,9 @@
                    href="{% url 'core:service_list' %}"{% if current|slice:":7" == 'service' %} aria-current="page"{% endif %}>Services</a></li>
             <li><a class="topnav__link{% if current == 'role_list' %} is-active{% endif %}"
                    href="{% url 'core:role_list' %}"{% if current == 'role_list' %} aria-current="page"{% endif %}>Roles</a></li>
+            {# read-only history of changes to vehicle, job and financial records (NFR2) #}
+            <li><a class="topnav__link{% if current == 'audit_log' %} is-active{% endif %}"
+                   href="{% url 'core:audit_log' %}"{% if current == 'audit_log' %} aria-current="page"{% endif %}>Audit log</a></li>
           {% endif %}
         </ul>
       </nav>

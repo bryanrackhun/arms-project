@@ -1706,6 +1706,41 @@ class PayrollForm(forms.Form):
         return cleaned
 
 
+class ReportForm(forms.Form):
+    """Choose the period for the business report (FR15).
+
+    Same date rules as ``PayrollForm``: both bounds inclusive, defaulting to the
+    current calendar month, and a reversed range reported inline rather than
+    producing an empty report that reads as "the workshop was idle".
+    """
+
+    start_date = forms.DateField(
+        label="From",
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+    )
+    end_date = forms.DateField(
+        label="To",
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            start, end = default_payroll_range()
+            self.fields["start_date"].initial = start
+            self.fields["end_date"].initial = end
+
+    def clean(self):
+        cleaned = super().clean()
+        start = cleaned.get("start_date")
+        end = cleaned.get("end_date")
+        if start is not None and end is not None and start > end:
+            self.add_error(
+                "start_date", "The start date cannot be after the end date."
+            )
+        return cleaned
+
+
 class RepairStatusLookupForm(forms.Form):
     """Look up a booking on the public status page (FR14, T4-STS-01).
 

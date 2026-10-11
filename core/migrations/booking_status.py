@@ -31,7 +31,7 @@ def pending_to_booked(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0002_vehicle_appointment'),
+        ('core', 'bookings'),
     ]
 
     operations = [

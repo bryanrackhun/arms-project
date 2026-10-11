@@ -44,7 +44,7 @@ def backfill_reference_codes(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0004_servicebay_inspection_repair'),
+        ('core', 'repairs'),
     ]
 
     operations = [

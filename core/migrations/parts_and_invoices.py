@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0005_appointment_referencecode'),
+        ('core', 'booking_reference'),
     ]
 
     operations = [
