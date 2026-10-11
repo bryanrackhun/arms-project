@@ -46,3 +46,6 @@ htmlcov/
 *.swp
 .DS_Store
 Thumbs.db
+
+#stop tracking core/tests
+core/tests/

@@ -46,6 +46,7 @@ from .services import (
     default_payroll_range,
     list_appointments_eligible_for_repair,
     normalise_license_plate,
+    verify_password,
 )
 
 
@@ -208,6 +209,127 @@ class StaffForm(forms.Form):
         return self.cleaned_data.get("password") or None
 
 
+class ProfileForm(forms.Form):
+    """A staff member's own contact details, edited from the profile page.
+
+    Role and active status are left out on purpose: only an Administrator may
+    change those, through :class:`StaffForm`.
+    """
+
+    first_name = forms.CharField(
+        label="First name",
+        max_length=50,
+        widget=forms.TextInput(attrs={"class": "form-control"}),
+    )
+    last_name = forms.CharField(
+        label="Last name",
+        max_length=50,
+        widget=forms.TextInput(attrs={"class": "form-control"}),
+    )
+    email = forms.EmailField(
+        label="Email",
+        max_length=50,
+        widget=forms.EmailInput(attrs={"class": "form-control"}),
+        help_text="Used as your login. Must be unique.",
+    )
+    phone = forms.CharField(
+        label="Phone",
+        max_length=50,
+        required=False,
+        widget=forms.TextInput(
+            attrs={"class": "form-control", "placeholder": "+1 555-0100"}
+        ),
+        help_text="Optional. Digits, optional +, spaces or hyphens.",
+    )
+
+    def __init__(self, *args, staff: Staff, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.staff = staff
+
+    def clean_first_name(self) -> str:
+        value = self.cleaned_data["first_name"].strip()
+        if not value:
+            raise forms.ValidationError("First name is required.")
+        return value
+
+    def clean_last_name(self) -> str:
+        value = self.cleaned_data["last_name"].strip()
+        if not value:
+            raise forms.ValidationError("Last name is required.")
+        return value
+
+    def clean_phone(self) -> str:
+        value = self.cleaned_data["phone"].strip()
+        if value and not PHONE_PATTERN.match(value):
+            raise forms.ValidationError(
+                "Enter a valid phone number (digits, optional +, spaces or hyphens)."
+            )
+        return value
+
+    def clean_email(self) -> str:
+        email = self.cleaned_data["email"].strip()
+        if not email:
+            raise forms.ValidationError("Email is required.")
+        if (
+            Staff.objects.filter(Email__iexact=email)
+            .exclude(StaffID=self.staff.StaffID)
+            .exists()
+        ):
+            raise forms.ValidationError("That email address is already in use.")
+        return email
+
+
+class PasswordChangeForm(forms.Form):
+    """Change your own password: current password, new password, confirmation.
+
+    The current password is checked here so the error appears on that field,
+    and again in :func:`core.services.change_own_password`.
+    """
+
+    current_password = forms.CharField(
+        label="Current password",
+        widget=forms.PasswordInput(
+            attrs={"class": "form-control", "autocomplete": "current-password"}
+        ),
+    )
+    new_password = forms.CharField(
+        label="New password",
+        widget=forms.PasswordInput(
+            attrs={"class": "form-control", "autocomplete": "new-password"}
+        ),
+        help_text=f"Minimum {MIN_PASSWORD_LENGTH} characters.",
+    )
+    confirm_password = forms.CharField(
+        label="Confirm new password",
+        widget=forms.PasswordInput(
+            attrs={"class": "form-control", "autocomplete": "new-password"}
+        ),
+    )
+
+    def __init__(self, *args, staff: Staff, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.staff = staff
+
+    def clean_current_password(self) -> str:
+        password = self.cleaned_data["current_password"]
+        if not verify_password(password, self.staff.Password):
+            raise forms.ValidationError("Your current password is incorrect.")
+        return password
+
+    def clean(self):
+        cleaned = super().clean()
+        password = cleaned.get("new_password")
+        confirm = cleaned.get("confirm_password")
+        if password and len(password) < MIN_PASSWORD_LENGTH:
+            self.add_error(
+                "new_password",
+                f"Password must be at least {MIN_PASSWORD_LENGTH} characters long.",
+            )
+        if password and confirm and password != confirm:
+            self.add_error("confirm_password", "The two passwords do not match.")
+        return cleaned
+
+
 class TechnicianForm(forms.Form):
     """Technician information form - linked staff account + hourly rate."""
 
@@ -270,7 +392,7 @@ class ServiceAssignmentForm(forms.Form):
     def __init__(self, *args, technician=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.technician = technician
-        queryset = Service.objects.all()
+        queryset = Service.objects.filter(IsActive=True)
         if technician is not None:
             assigned = technician.service_assignments.values_list(
                 "ServiceCode_id", flat=True
@@ -457,7 +579,7 @@ class BookingForm(_SlotFormMixin, forms.Form):
     )
     service = forms.ModelChoiceField(
         label="Requested service",
-        queryset=Service.objects.all(),
+        queryset=Service.objects.filter(IsActive=True),
         empty_label="— Select a service —",
         widget=forms.Select(attrs={"class": "form-control"}),
         help_text="Choose from the workshop's service catalogue.",
@@ -591,7 +713,7 @@ class AppointmentForm(_SlotFormMixin, forms.Form):
     )
     service = forms.ModelChoiceField(
         label="Requested service",
-        queryset=Service.objects.all(),
+        queryset=Service.objects.filter(IsActive=True),
         empty_label="— Select a service —",
         widget=forms.Select(attrs={"class": "form-control"}),
     )
@@ -638,6 +760,11 @@ class AppointmentForm(_SlotFormMixin, forms.Form):
         self.appointment = appointment
         if appointment is not None:
             self.exclude_appointment_id = appointment.pk
+            # A booking keeps its service even after the service is retired, so
+            # editing it must still offer (and accept) the current choice.
+            self.fields["service"].queryset = Service.objects.filter(
+                IsActive=True
+            ) | Service.objects.filter(pk=appointment.ServiceCode_id)
 
     def clean_first_name(self) -> str:
         value = self.cleaned_data["first_name"].strip()
@@ -1593,6 +1720,44 @@ class InvoiceGenerateForm(forms.Form):
         if rate is None:
             raise forms.ValidationError("A tax rate is required.")
         return rate
+
+
+class InvoiceTaxRateForm(forms.Form):
+    """Correct a Pending invoice's tax rate (Administrator)."""
+
+    tax_rate = forms.DecimalField(
+        label="Corrected tax rate (%)",
+        max_digits=5,
+        decimal_places=2,
+        min_value=TAX_RATE_MIN,
+        max_value=TAX_RATE_MAX,
+        widget=forms.NumberInput(
+            attrs={"class": "form-control", "step": "0.01", "min": "0", "max": "100"}
+        ),
+        help_text="The total is recalculated from the stored labour and parts.",
+    )
+
+
+class ReasonForm(forms.Form):
+    """A required reason, for corrections that must explain themselves."""
+
+    reason = forms.CharField(
+        label="Reason",
+        max_length=255,
+        widget=forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+        help_text="Required. Kept with the record and in the audit log.",
+    )
+
+    def __init__(self, *args, placeholder: str = "", **kwargs):
+        super().__init__(*args, **kwargs)
+        if placeholder:
+            self.fields["reason"].widget.attrs["placeholder"] = placeholder
+
+    def clean_reason(self) -> str:
+        value = " ".join((self.cleaned_data.get("reason") or "").split())
+        if not value:
+            raise forms.ValidationError("A reason is required.")
+        return value
 
 
 class InvoiceFilterForm(forms.Form):

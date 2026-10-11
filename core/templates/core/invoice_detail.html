@@ -18,6 +18,8 @@
       {{ repair.customer_name }} — repair job #{{ repair.pk }}
       {% if invoice.is_paid %}
         <span class="badge badge--active">Paid</span>
+      {% elif invoice.is_void %}
+        <span class="badge badge--inactive">Void</span>
       {% else %}
         <span class="badge badge--pending">{{ invoice.PaymentStatus }}</span>
       {% endif %}
@@ -37,6 +39,17 @@
         Settled on {{ invoice.PaidAt }}. A paid invoice is final — its amounts and
         payment status can no longer be changed.
       </p>
+    </div>
+  </div>
+{% elif invoice.is_void %}
+  <div class="alert alert--info" role="status">
+    <span class="alert__icon" aria-hidden="true">&#8505;</span>
+    <div class="alert__body">
+      <p class="alert__text">
+        This invoice was <strong>voided</strong> on {{ invoice.VoidedAt }} and can no
+        longer be paid. Reason: {{ invoice.VoidReason }}
+      </p>
+      <p class="alert__text">The repair job can be invoiced again.</p>
     </div>
   </div>
 {% else %}
@@ -115,6 +128,8 @@
     <h2 class="card__title">Payment</h2>
     {% if invoice.is_paid %}
       <span class="badge badge--active">Settled</span>
+    {% elif invoice.is_void %}
+      <span class="badge badge--inactive">Void</span>
     {% else %}
       <span class="badge badge--pending">Awaiting payment</span>
     {% endif %}
@@ -137,6 +152,12 @@
       <dt>Paid at</dt>
       <dd>{{ invoice.PaidAt|default:"—" }}</dd>
     </div>
+    {% if invoice.is_void %}
+      <div class="dl-grid__row">
+        <dt>Voided</dt>
+        <dd>{{ invoice.VoidedAt }} — {{ invoice.VoidReason }}</dd>
+      </div>
+    {% endif %}
     <div class="dl-grid__row">
       <dt>Amount due</dt>
       <dd class="dl-grid__strong">{{ currency }} {{ invoice.TotalAmount }}</dd>
@@ -145,15 +166,17 @@
 
   {% if can_mark_paid %}
     <form class="inline-form" method="post" action="{% url 'core:invoice_pay' invoice.InvoiceID %}"
-          data-confirm="Mark invoice #{{ invoice.InvoiceID }} as Paid? This cannot be undone.">
+          data-confirm="Mark invoice #{{ invoice.InvoiceID }} as Paid? Only an Administrator can undo this.">
       {% csrf_token %}
       <button class="btn btn--primary" type="submit">Mark as Paid</button>
     </form>
     <p class="note">
       Only cash is accepted at the moment. Marking the invoice Paid records a cash
       payment at the moment the customer settled the bill and closes it for editing.
-      There is no way back to Pending.
+      Only an Administrator can undo a payment recorded by mistake.
     </p>
+  {% elif invoice.is_void %}
+    <p class="note">This invoice is void and cannot be paid.</p>
   {% else %}
     <p class="note">
       This invoice is Paid and final — its payment status and amounts can no longer
@@ -161,4 +184,53 @@
     </p>
   {% endif %}
 </section>
+
+{% if can_correct and not invoice.is_void %}
+  {# Administrator-only corrections. Each one is written to the audit log. #}
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Correct this invoice</h2>
+      <span class="card__hint">Administrator only · every change is recorded in the audit log</span>
+    </header>
+
+    {% if invoice.is_pending %}
+      <h3 class="card__subtitle">Change the tax rate</h3>
+      <form class="form form--inline" method="post" action="{% url 'core:invoice_tax' invoice.InvoiceID %}"
+            data-confirm="Change the tax rate on invoice #{{ invoice.InvoiceID }}? The total will be recalculated.">
+        {% csrf_token %}
+        <div class="form-grid form-grid--inline">
+          {% include "core/_field.html" with field=tax_form.tax_rate %}
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Update tax rate</button>
+        </div>
+      </form>
+
+      <h3 class="card__subtitle">Void the invoice</h3>
+      <form class="form form--inline" method="post" action="{% url 'core:invoice_void' invoice.InvoiceID %}"
+            data-confirm="Void invoice #{{ invoice.InvoiceID }}? It can never be paid, and the repair job can be invoiced again.">
+        {% csrf_token %}
+        <div class="form-grid form-grid--inline">
+          {% include "core/_field.html" with field=void_form.reason wide=True %}
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--danger" type="submit">Void invoice</button>
+        </div>
+      </form>
+    {% elif invoice.is_paid %}
+      <h3 class="card__subtitle">Undo a mistaken payment</h3>
+      <form class="form form--inline" method="post" action="{% url 'core:invoice_undo_payment' invoice.InvoiceID %}"
+            data-confirm="Put invoice #{{ invoice.InvoiceID }} back to Pending? The recorded payment time will be cleared.">
+        {% csrf_token %}
+        <div class="form-grid form-grid--inline">
+          {% include "core/_field.html" with field=undo_form.reason wide=True %}
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--danger" type="submit">Undo payment</button>
+        </div>
+      </form>
+      <p class="note">To void a paid invoice, undo the payment first.</p>
+    {% endif %}
+  </section>
+{% endif %}
 {% endblock %}

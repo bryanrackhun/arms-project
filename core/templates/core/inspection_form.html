@@ -77,19 +77,50 @@
       <span class="card__hint">{{ inspection.image_count }} of {{ max_inspection_images }}</span>
     </header>
     <div class="tile-grid">
-      {% for image in inspection.images %}
-        <a class="tile" href="{{ image.url }}" target="_blank" rel="noopener">
+      {% for slot, image in inspection.image_slots %}
+        <div class="tile">
           <span class="tile__body">
-            <span class="tile__title">Photograph {{ forloop.counter }}</span>
+            <a class="tile__title" href="{{ image.url }}" target="_blank" rel="noopener">Photograph {{ slot }}</a>
             <span class="tile__desc">Opens in a new tab</span>
           </span>
-        </a>
+          <form class="inline-form" method="post"
+                action="{% url 'core:inspection_image_remove' repair.pk slot %}"
+                data-confirm="Remove photograph {{ slot }}? The image file is deleted and cannot be recovered.">
+            {% csrf_token %}
+            <button class="btn btn--ghost btn--sm" type="submit">Remove</button>
+          </form>
+        </div>
       {% endfor %}
     </div>
     <p class="note">
       Stored photographs are kept when this inspection is amended; new uploads
-      fill the remaining slots.
+      fill the remaining slots. Removing a photograph frees its slot.
     </p>
+  </section>
+{% endif %}
+
+{% if mode == 'edit' %}
+  <section class="card">
+    <header class="card__head">
+      <h2 class="card__title">Delete inspection</h2>
+      <span class="card__hint">Only while the job is Not Started</span>
+    </header>
+    {% if repair.Status == 'Not Started' %}
+      <form class="inline-form" method="post" action="{% url 'core:inspection_delete' repair.pk %}"
+            data-confirm="Delete the inspection for job #{{ repair.pk }}, including its photographs? This cannot be undone.">
+        {% csrf_token %}
+        <button class="btn btn--danger" type="submit">Delete inspection</button>
+      </form>
+      <p class="note">
+        Use this if the inspection was recorded on the wrong job. A new one can be
+        recorded afterwards.
+      </p>
+    {% else %}
+      <p class="note">
+        Work on this job has started, so its inspection is kept as the record of the
+        vehicle's condition. It can still be amended.
+      </p>
+    {% endif %}
   </section>
 {% endif %}
 

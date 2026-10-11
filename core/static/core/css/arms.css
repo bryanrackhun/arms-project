@@ -354,6 +354,78 @@ svg{display:block}
 .nav-toggle[aria-expanded="true"] .nav-toggle__bar:nth-child(2){opacity:0}
 .nav-toggle[aria-expanded="true"] .nav-toggle__bar:nth-child(3){transform:translateY(-6px) rotate(-45deg)}
 
+/* dropdown groups (Administrator) and the user menu.
+   A group's title is a <button>; it takes the same look as a top-level
+   link, and the same "is-active" highlight when the current page is one
+   of its links. Without JavaScript a menu opens on hover or keyboard
+   focus; with it (html.has-js) aria-expanded alone decides. */
+.topnav__group,.usermenu{position:relative}
+.topnav__toggle{
+  display:inline-flex;align-items:center;gap:5px;
+  border:0;background:transparent;
+  font:inherit;font-size:14px;font-weight:600;line-height:inherit;
+  cursor:pointer;
+}
+.topnav__caret{width:14px;height:14px;flex:0 0 auto;transition:transform .15s ease}
+[aria-expanded="true"] > .topnav__caret{transform:rotate(180deg)}
+.topnav__section{display:none}
+
+.topnav__menu{
+  display:none;
+  position:absolute;
+  top:calc(100% + 6px);
+  left:0;
+  z-index:110;
+  min-width:190px;
+  padding:6px;
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--r-lg);
+  box-shadow:var(--shadow-lg);
+}
+.topnav__menu--end{left:auto;right:0}
+.topnav__group:hover > .topnav__menu,
+.topnav__group:focus-within > .topnav__menu,
+.usermenu:hover > .topnav__menu,
+.usermenu:focus-within > .topnav__menu{display:block}
+.has-js .topnav__group:hover > .topnav__menu,
+.has-js .topnav__group:focus-within > .topnav__menu,
+.has-js .usermenu:hover > .topnav__menu,
+.has-js .usermenu:focus-within > .topnav__menu{display:none}
+.has-js [aria-expanded="true"] + .topnav__section + .topnav__menu,
+.has-js .usermenu__toggle[aria-expanded="true"] + .topnav__menu{display:block}
+
+.topnav__item{
+  display:flex;align-items:center;gap:8px;
+  width:100%;
+  padding:8px 11px;
+  border:0;border-radius:var(--r-md);
+  background:transparent;
+  color:var(--ink);
+  font:inherit;font-size:14px;font-weight:600;text-align:left;
+  white-space:nowrap;
+  cursor:pointer;
+}
+.topnav__item:hover,.topnav__item:focus-visible{background:var(--brand-soft);color:var(--brand-ink);text-decoration:none}
+.topnav__item.is-active{background:var(--brand-soft);color:var(--brand-ink);box-shadow:inset 3px 0 0 var(--brand)}
+.topnav__item svg{width:16px;height:16px;flex:0 0 auto}
+.topnav__item--logout{color:var(--err)}
+.topnav__item--logout:hover,.topnav__item--logout:focus-visible{background:var(--err-bg);color:var(--err)}
+
+/* the user chip is the user menu's button */
+.usermenu__toggle{
+  padding:4px 10px 4px 4px;
+  border:1px solid transparent;
+  border-radius:var(--r-pill);
+  background:transparent;
+  color:#fff;
+  font:inherit;text-align:left;
+  cursor:pointer;
+  transition:background-color .15s ease,border-color .15s ease;
+}
+.usermenu__toggle:hover,.usermenu__toggle[aria-expanded="true"]{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.24)}
+.usermenu__toggle.is-active{border-color:#fff}
+
 /* =====================================================================
    Page layout
    ===================================================================== */
@@ -2031,6 +2103,31 @@ body.page-home{
   }
   .topnav__link{padding:11px 13px;border-radius:var(--r-md)}
   .topnav__link.is-active::after{left:13px;right:auto;width:3px;height:auto;top:9px;bottom:9px}
+
+  /* dropdown groups become labelled sections of the slide-down menu */
+  .topnav__toggle{display:none}
+  .topnav__section{
+    display:block;
+    padding:12px 13px 4px;
+    color:#cfdcff;
+    font-size:11.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+  }
+  .topnav__section.is-active{color:#fff}
+  .topnav__group > .topnav__menu,
+  .has-js .topnav__group > .topnav__menu{
+    display:flex;flex-direction:column;gap:2px;
+    position:static;
+    min-width:0;padding:0;
+    background:transparent;border:0;box-shadow:none;
+  }
+  .topnav__group .topnav__item{padding:11px 13px 11px 22px;color:#dbe6ff}
+  .topnav__group .topnav__item:hover{background:rgba(255,255,255,.16);color:#fff}
+  .topnav__group .topnav__item.is-active{background:#fff;color:var(--brand-ink)}
+
+  /* the user menu stays a dropdown, opening below the chip; the chip has
+     the whole row to itself now that log out lives in the menu */
+  .usermenu .topnav__menu{left:0;right:auto}
+  .usermenu__toggle .userchip__meta{display:flex}
 
   .page{padding:var(--space-4) var(--space-3) var(--space-5)}
   .page-head__title{font-size:22px}

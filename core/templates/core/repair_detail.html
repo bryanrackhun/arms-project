@@ -119,6 +119,19 @@
     <span class="card__hint">Not Started &rarr; In Progress &rarr; Completed</span>
   </header>
 
+  {% if repair.is_cancelled %}
+    <div class="alert alert--info" role="status">
+      <span class="alert__icon" aria-hidden="true">&#8505;</span>
+      <div class="alert__body">
+        <p class="alert__text">
+          This job was <strong>cancelled</strong> on {{ repair.CancelledAt }}.
+          Reason: {{ repair.CancelReason }}
+        </p>
+        <p class="alert__text">Its service bay was released, and it cannot be invoiced.</p>
+      </div>
+    </div>
+  {% endif %}
+
   {# The three steps rendered as a track, so where a job stands is obvious
      without reading the status badge. Marked up as a list for screen readers,
      using the same stat tiles the dashboard uses for its counters. #}
@@ -187,6 +200,8 @@
         A completed job is closed to re-assignment — its technician and bay are
         the record Timebox 4 will invoice and pay against.
       </p>
+    {% elif repair.is_cancelled %}
+      <p class="note">A cancelled job is closed to re-assignment.</p>
     {% else %}
       <form class="form form--inline" method="post"
             action="{% url 'core:repair_assign' repair.pk %}">
@@ -215,6 +230,20 @@
         Only Available bays can be taken; assigning one marks it Occupied until
         this job completes.
       </p>
+    {% endif %}
+
+    {% if can_cancel %}
+      <h3 class="card__subtitle">Cancel this job</h3>
+      <form class="form form--inline" method="post" action="{% url 'core:repair_cancel' repair.pk %}"
+            data-confirm="Cancel repair job #{{ repair.pk }} for {{ repair.customer_name }}? Its service bay will be released and the job cannot be invoiced.">
+        {% csrf_token %}
+        <div class="form-grid form-grid--inline">
+          {% include "core/_field.html" with field=cancel_form.reason wide=True %}
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--danger" type="submit">Cancel job</button>
+        </div>
+      </form>
     {% endif %}
   </section>
 {% endif %}

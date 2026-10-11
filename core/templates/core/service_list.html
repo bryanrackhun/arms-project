@@ -38,6 +38,7 @@
           <th scope="col" class="num">Base cost</th>
           <th scope="col" class="num">Est. duration</th>
           <th scope="col" class="num">Qualified technicians</th>
+          <th scope="col">Status</th>
           <th scope="col" class="th-actions">Actions</th>
         </tr>
       </thead>
@@ -55,14 +56,35 @@
                 <span class="badge badge--muted" title="No technician is qualified for this service yet">None</span>
               {% endif %}
             </td>
+            <td>
+              {% if service.IsActive %}
+                <span class="badge badge--active">Offered</span>
+              {% else %}
+                <span class="badge badge--inactive" title="Hidden from booking and technician assignment">Retired</span>
+              {% endif %}
+            </td>
             <td class="actions">
               <a class="btn btn--ghost btn--sm"
                  href="{% url 'core:service_edit' service.Service_code %}">Edit</a>
+              {% if service.IsActive %}
+                <form class="inline-form" method="post"
+                      action="{% url 'core:service_deactivate' service.Service_code %}"
+                      data-confirm="Retire {{ service.ServiceName }}? It will no longer be offered for booking or technician assignment. Existing appointments and invoices keep it.">
+                  {% csrf_token %}
+                  <button class="btn btn--ghost btn--sm" type="submit">Retire</button>
+                </form>
+              {% else %}
+                <form class="inline-form" method="post"
+                      action="{% url 'core:service_reactivate' service.Service_code %}">
+                  {% csrf_token %}
+                  <button class="btn btn--ghost btn--sm" type="submit">Reactivate</button>
+                </form>
+              {% endif %}
             </td>
           </tr>
         {% empty %}
           <tr>
-            <td colspan="6">
+            <td colspan="7">
               {% include "core/_empty.html" with title="No services yet" hint="Add one so technicians can be qualified for it." %}
             </td>
           </tr>
@@ -76,7 +98,7 @@
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>
     </svg>
-    Assign services to technicians from the technician edit page.
+    Assign services to technicians from the technician edit page. A retired service is hidden from booking and assignment but stays on existing appointments and invoices.
   </p>
 </section>
 {% endblock %}

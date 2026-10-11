@@ -39,87 +39,141 @@
       </button>
 
       <nav class="topnav" id="primary-nav" aria-label="Primary">
+        {# Role-based authorisation: links are offered only to the role that may #}
+        {# actually open them, so nothing bounces to the access-denied page. #}
+        {# Administrators get grouped dropdowns; the other roles have few enough #}
+        {# links to keep them flat. On small screens each group is shown as a #}
+        {# labelled section of the slide-down menu instead of a dropdown. #}
         <ul class="topnav__list">
           <li><a class="topnav__link{% if current == 'dashboard' %} is-active{% endif %}"
                  href="{% url 'core:dashboard' %}"{% if current == 'dashboard' %} aria-current="page"{% endif %}>Dashboard</a></li>
-          <li><a class="topnav__link{% if current == 'profile' %} is-active{% endif %}"
-                 href="{% url 'core:profile' %}"{% if current == 'profile' %} aria-current="page"{% endif %}>My profile</a></li>
-          {% if identity.role_name == 'Receptionist' or identity.role_name == 'Administrator' %}
-            {# the booking desk: appointments and vehicle records (Timebox 2) #}
+
+          {% if identity.role_name == 'Administrator' %}
+            {# Bookings: appointments and vehicle records (Timebox 2) #}
+            <li class="topnav__group" data-menu>
+              <button class="topnav__link topnav__toggle{% if current|slice:":11" == 'appointment' or current|slice:":7" == 'vehicle' %} is-active{% endif %}"
+                      type="button" aria-expanded="false" aria-controls="nav-menu-bookings">
+                Bookings<svg class="topnav__caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <span class="topnav__section{% if current|slice:":11" == 'appointment' or current|slice:":7" == 'vehicle' %} is-active{% endif %}" aria-hidden="true">Bookings</span>
+              <ul class="topnav__menu" id="nav-menu-bookings" aria-label="Bookings">
+                <li><a class="topnav__item{% if current|slice:":11" == 'appointment' %} is-active{% endif %}"
+                       href="{% url 'core:appointment_list' %}"{% if current|slice:":11" == 'appointment' %} aria-current="page"{% endif %}>Appointments</a></li>
+                <li><a class="topnav__item{% if current|slice:":7" == 'vehicle' %} is-active{% endif %}"
+                       href="{% url 'core:vehicle_list' %}"{% if current|slice:":7" == 'vehicle' %} aria-current="page"{% endif %}>Vehicles</a></li>
+              </ul>
+            </li>
+
+            {# Workshop: the repair job board, bays and the parts catalogue #}
+            <li class="topnav__group" data-menu>
+              <button class="topnav__link topnav__toggle{% if current|slice:":6" == 'repair' or current|slice:":3" == 'bay' or current|slice:":4" == 'part' %} is-active{% endif %}"
+                      type="button" aria-expanded="false" aria-controls="nav-menu-workshop">
+                Workshop<svg class="topnav__caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <span class="topnav__section{% if current|slice:":6" == 'repair' or current|slice:":3" == 'bay' or current|slice:":4" == 'part' %} is-active{% endif %}" aria-hidden="true">Workshop</span>
+              <ul class="topnav__menu" id="nav-menu-workshop" aria-label="Workshop">
+                <li><a class="topnav__item{% if current|slice:":6" == 'repair' %} is-active{% endif %}"
+                       href="{% url 'core:repair_list' %}"{% if current|slice:":6" == 'repair' %} aria-current="page"{% endif %}>Repairs</a></li>
+                <li><a class="topnav__item{% if current|slice:":3" == 'bay' %} is-active{% endif %}"
+                       href="{% url 'core:bay_list' %}"{% if current|slice:":3" == 'bay' %} aria-current="page"{% endif %}>Service bays</a></li>
+                <li><a class="topnav__item{% if current|slice:":4" == 'part' and current != 'part_low_stock' %} is-active{% endif %}"
+                       href="{% url 'core:part_list' %}"{% if current|slice:":4" == 'part' and current != 'part_low_stock' %} aria-current="page"{% endif %}>Parts</a></li>
+                <li><a class="topnav__item{% if current == 'part_low_stock' %} is-active{% endif %}"
+                       href="{% url 'core:part_low_stock' %}"{% if current == 'part_low_stock' %} aria-current="page"{% endif %}>Low stock</a></li>
+              </ul>
+            </li>
+
+            {# Billing: invoices, payroll and business reports (Timebox 4, FR15) #}
+            <li class="topnav__group" data-menu>
+              <button class="topnav__link topnav__toggle{% if current|slice:":7" == 'invoice' or current == 'payroll' or current == 'reports' %} is-active{% endif %}"
+                      type="button" aria-expanded="false" aria-controls="nav-menu-billing">
+                Billing<svg class="topnav__caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <span class="topnav__section{% if current|slice:":7" == 'invoice' or current == 'payroll' or current == 'reports' %} is-active{% endif %}" aria-hidden="true">Billing</span>
+              <ul class="topnav__menu" id="nav-menu-billing" aria-label="Billing">
+                <li><a class="topnav__item{% if current|slice:":7" == 'invoice' %} is-active{% endif %}"
+                       href="{% url 'core:invoice_list' %}"{% if current|slice:":7" == 'invoice' %} aria-current="page"{% endif %}>Invoices</a></li>
+                <li><a class="topnav__item{% if current == 'payroll' %} is-active{% endif %}"
+                       href="{% url 'core:payroll' %}"{% if current == 'payroll' %} aria-current="page"{% endif %}>Payroll</a></li>
+                <li><a class="topnav__item{% if current == 'reports' %} is-active{% endif %}"
+                       href="{% url 'core:reports' %}"{% if current == 'reports' %} aria-current="page"{% endif %}>Reports</a></li>
+              </ul>
+            </li>
+
+            {# Admin: accounts, the service catalogue, roles and the audit log (NFR2) #}
+            <li class="topnav__group" data-menu>
+              <button class="topnav__link topnav__toggle{% if current|slice:":5" == 'staff' or current|slice:":10" == 'technician' or current|slice:":7" == 'service' or current == 'role_list' or current == 'audit_log' %} is-active{% endif %}"
+                      type="button" aria-expanded="false" aria-controls="nav-menu-admin">
+                Admin<svg class="topnav__caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <span class="topnav__section{% if current|slice:":5" == 'staff' or current|slice:":10" == 'technician' or current|slice:":7" == 'service' or current == 'role_list' or current == 'audit_log' %} is-active{% endif %}" aria-hidden="true">Admin</span>
+              <ul class="topnav__menu topnav__menu--end" id="nav-menu-admin" aria-label="Admin">
+                <li><a class="topnav__item{% if current|slice:":5" == 'staff' %} is-active{% endif %}"
+                       href="{% url 'core:staff_list' %}"{% if current|slice:":5" == 'staff' %} aria-current="page"{% endif %}>Staff</a></li>
+                <li><a class="topnav__item{% if current|slice:":10" == 'technician' %} is-active{% endif %}"
+                       href="{% url 'core:technician_list' %}"{% if current|slice:":10" == 'technician' %} aria-current="page"{% endif %}>Technicians</a></li>
+                <li><a class="topnav__item{% if current|slice:":7" == 'service' %} is-active{% endif %}"
+                       href="{% url 'core:service_list' %}"{% if current|slice:":7" == 'service' %} aria-current="page"{% endif %}>Services</a></li>
+                <li><a class="topnav__item{% if current == 'role_list' %} is-active{% endif %}"
+                       href="{% url 'core:role_list' %}"{% if current == 'role_list' %} aria-current="page"{% endif %}>Roles</a></li>
+                <li><a class="topnav__item{% if current == 'audit_log' %} is-active{% endif %}"
+                       href="{% url 'core:audit_log' %}"{% if current == 'audit_log' %} aria-current="page"{% endif %}>Audit log</a></li>
+              </ul>
+            </li>
+
+          {% elif identity.role_name == 'Receptionist' %}
+            {# the booking desk (Timebox 2), the job board read-only (Timebox 3), #}
+            {# billing (Timebox 4) and the catalogue to answer "have you got one?" #}
             <li><a class="topnav__link{% if current|slice:":11" == 'appointment' %} is-active{% endif %}"
                    href="{% url 'core:appointment_list' %}"{% if current|slice:":11" == 'appointment' %} aria-current="page"{% endif %}>Appointments</a></li>
             <li><a class="topnav__link{% if current|slice:":7" == 'vehicle' %} is-active{% endif %}"
                    href="{% url 'core:vehicle_list' %}"{% if current|slice:":7" == 'vehicle' %} aria-current="page"{% endif %}>Vehicles</a></li>
-            {# the catalogue is readable by the counter to answer "have you got one?" #}
-            <li><a class="topnav__link{% if current|slice:":4" == 'part' %} is-active{% endif %}"
-                   href="{% url 'core:part_list' %}"{% if current|slice:":4" == 'part' %} aria-current="page"{% endif %}>Parts</a></li>
-          {% endif %}
-          {% if identity.role_name == 'Administrator' or identity.role_name == 'Receptionist' %}
-            {# repair job board: administrators manage, receptionists read (Timebox 3) #}
             <li><a class="topnav__link{% if current|slice:":6" == 'repair' %} is-active{% endif %}"
                    href="{% url 'core:repair_list' %}"{% if current|slice:":6" == 'repair' %} aria-current="page"{% endif %}>Repairs</a></li>
-            {# invoices: the counter raises the bill and takes payment (Timebox 4) #}
             <li><a class="topnav__link{% if current|slice:":7" == 'invoice' %} is-active{% endif %}"
                    href="{% url 'core:invoice_list' %}"{% if current|slice:":7" == 'invoice' %} aria-current="page"{% endif %}>Invoices</a></li>
-          {% endif %}
-          {% if identity.role_name == 'Administrator' %}
-            {# spare-part catalogue: a technician may draw stock against a job, #}
-            {# so the read-only list is offered to them too (below) #}
             <li><a class="topnav__link{% if current|slice:":4" == 'part' %} is-active{% endif %}"
                    href="{% url 'core:part_list' %}"{% if current|slice:":4" == 'part' %} aria-current="page"{% endif %}>Parts</a></li>
-            {# payroll reports what the workshop owes its own staff (Timebox 4) #}
-            <li><a class="topnav__link{% if current == 'payroll' %} is-active{% endif %}"
-                   href="{% url 'core:payroll' %}"{% if current == 'payroll' %} aria-current="page"{% endif %}>Payroll</a></li>
-            {# business reports summarise the stored records for a period (FR15) #}
-            <li><a class="topnav__link{% if current == 'reports' %} is-active{% endif %}"
-                   href="{% url 'core:reports' %}"{% if current == 'reports' %} aria-current="page"{% endif %}>Reports</a></li>
-          {% endif %}
-          {% if identity.role_name == 'Technician' %}
-            {# a technician's whole view of this module: their own jobs (Timebox 3) #}
+
+          {% elif identity.role_name == 'Technician' %}
+            {# a technician's whole view of the job board: their own jobs (Timebox 3) #}
             <li><a class="topnav__link{% if current == 'my_repairs' or current|slice:":6" == 'repair' or current|slice:":10" == 'inspection' %} is-active{% endif %}"
                    href="{% url 'core:my_repairs' %}"{% if current == 'my_repairs' %} aria-current="page"{% endif %}>My repairs</a></li>
             {# a technician checks what is on the shelf before starting a job #}
             <li><a class="topnav__link{% if current|slice:":4" == 'part' %} is-active{% endif %}"
                    href="{% url 'core:part_list' %}"{% if current|slice:":4" == 'part' %} aria-current="page"{% endif %}>Parts</a></li>
           {% endif %}
-          {% if identity.role_name == 'Administrator' %}
-            {# role-based authorisation: management links offered only to the #}
-            {# role that may actually open them, so nothing bounces to 403 #}
-            <li><a class="topnav__link{% if current|slice:":3" == 'bay' %} is-active{% endif %}"
-                   href="{% url 'core:bay_list' %}"{% if current|slice:":3" == 'bay' %} aria-current="page"{% endif %}>Bays</a></li>
-            <li><a class="topnav__link{% if current|slice:":5" == 'staff' %} is-active{% endif %}"
-                   href="{% url 'core:staff_list' %}"{% if current|slice:":5" == 'staff' %} aria-current="page"{% endif %}>Staff</a></li>
-            <li><a class="topnav__link{% if current|slice:":10" == 'technician' %} is-active{% endif %}"
-                   href="{% url 'core:technician_list' %}"{% if current|slice:":10" == 'technician' %} aria-current="page"{% endif %}>Technicians</a></li>
-            <li><a class="topnav__link{% if current|slice:":7" == 'service' %} is-active{% endif %}"
-                   href="{% url 'core:service_list' %}"{% if current|slice:":7" == 'service' %} aria-current="page"{% endif %}>Services</a></li>
-            <li><a class="topnav__link{% if current == 'role_list' %} is-active{% endif %}"
-                   href="{% url 'core:role_list' %}"{% if current == 'role_list' %} aria-current="page"{% endif %}>Roles</a></li>
-            {# read-only history of changes to vehicle, job and financial records (NFR2) #}
-            <li><a class="topnav__link{% if current == 'audit_log' %} is-active{% endif %}"
-                   href="{% url 'core:audit_log' %}"{% if current == 'audit_log' %} aria-current="page"{% endif %}>Audit log</a></li>
-          {% endif %}
         </ul>
       </nav>
 
-      <div class="topbar__user">
-        <span class="userchip">
+      {# The user chip opens a small menu with the profile link and log out. #}
+      <div class="topbar__user usermenu" data-menu>
+        <button class="userchip usermenu__toggle{% if current == 'profile' %} is-active{% endif %}"
+                type="button" aria-expanded="false" aria-controls="user-menu">
           <span class="userchip__avatar" aria-hidden="true">{{ identity.staff_name|slice:":1"|upper|default:"A" }}</span>
           <span class="userchip__meta">
             <span class="userchip__name">{{ identity.staff_name|default:"Signed in" }}</span>
             <span class="badge badge--role">{{ identity.role_name }}</span>
           </span>
-        </span>
-        <form class="logout" method="post" action="{% url 'core:logout' %}">
-          {% csrf_token %}
-          <button class="btn btn--logout" type="submit">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>
-            </svg>
-            <span>Log out</span>
-          </button>
-        </form>
+          <span class="sr-only">— account menu</span>
+          <svg class="topnav__caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <ul class="topnav__menu topnav__menu--end usermenu__panel" id="user-menu" aria-label="Account">
+          <li><a class="topnav__item{% if current == 'profile' %} is-active{% endif %}"
+                 href="{% url 'core:profile' %}"{% if current == 'profile' %} aria-current="page"{% endif %}>My profile</a></li>
+          <li>
+            <form class="logout" method="post" action="{% url 'core:logout' %}">
+              {% csrf_token %}
+              <button class="topnav__item topnav__item--logout" type="submit">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>
+                </svg>
+                <span>Log out</span>
+              </button>
+            </form>
+          </li>
+        </ul>
       </div>
     </div>
   </header>

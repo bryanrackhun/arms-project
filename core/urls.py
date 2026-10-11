@@ -8,7 +8,9 @@ Route protection:
     * ``about`` / ``contact`` / ``privacy`` / ``terms`` are public static
       content pages linked from the landing page's navigation and footer
       (``static_page_view``; an unknown page name raises ``Http404``).
-    * ``dashboard`` and ``profile`` require a valid session (any role).
+    * ``dashboard`` and ``profile`` require a valid session (any role), as do
+      ``profile/edit/`` and ``profile/password/``, where a user changes their own
+      contact details and password.
     * ``appointments/*`` and ``vehicles/*`` require Receptionist or
       Administrator (``booking_staff``); ``vehicles/<id>/`` is also open to
       Technicians for history viewing (``vehicle_viewer``).
@@ -26,7 +28,9 @@ Route protection:
       follows the repair-job rule: the assigned technician or an Administrator,
       checked per job in the view.
     * ``invoices/*`` are Receptionist and Administrator (``invoice_staff``). A
-      Technician cannot view invoices at all.
+      Technician cannot view invoices at all. Correcting an invoice - changing
+      its tax rate, voiding it or undoing a payment - is Administrator-only
+      (``admin_only``).
     * ``payroll/`` is Administrator-only (``payroll_manager``).
     * ``reports/`` (FR15) and ``audit-log/`` (NFR2) are Administrator-only
       (``admin_only``).
@@ -62,6 +66,8 @@ urlpatterns = [
     # dashboard + own profile (all roles)
     path("dashboard/", views.dashboard_view, name="dashboard"),
     path("profile/", views.profile_view, name="profile"),
+    path("profile/edit/", views.profile_update_view, name="profile_update"),
+    path("profile/password/", views.profile_password_view, name="profile_password"),
 
     # roles (Administrator)
     path("roles/", views.role_list_view, name="role_list"),
@@ -114,6 +120,16 @@ urlpatterns = [
         "services/<int:service_code>/edit/",
         views.service_edit_view,
         name="service_edit",
+    ),
+    path(
+        "services/<int:service_code>/deactivate/",
+        views.service_deactivate_view,
+        name="service_deactivate",
+    ),
+    path(
+        "services/<int:service_code>/reactivate/",
+        views.service_reactivate_view,
+        name="service_reactivate",
     ),
 
     # ------------------------------------------------------------------
@@ -203,6 +219,11 @@ urlpatterns = [
         views.repair_assign_view,
         name="repair_assign",
     ),
+    path(
+        "repairs/<int:repair_id>/cancel/",
+        views.repair_cancel_view,
+        name="repair_cancel",
+    ),
 
     # technician's own board (Technician)
     path("my-repairs/", views.my_repairs_view, name="my_repairs"),
@@ -217,6 +238,16 @@ urlpatterns = [
         "repairs/<int:repair_id>/inspection/edit/",
         views.inspection_edit_view,
         name="inspection_edit",
+    ),
+    path(
+        "repairs/<int:repair_id>/inspection/photos/<int:slot>/remove/",
+        views.inspection_image_remove_view,
+        name="inspection_image_remove",
+    ),
+    path(
+        "repairs/<int:repair_id>/inspection/delete/",
+        views.inspection_delete_view,
+        name="inspection_delete",
     ),
 
     # service bays (Administrator)
@@ -277,6 +308,14 @@ urlpatterns = [
         "invoices/<int:invoice_id>/", views.invoice_detail_view, name="invoice_detail"
     ),
     path("invoices/<int:invoice_id>/pay/", views.invoice_pay_view, name="invoice_pay"),
+    # invoice corrections (Administrator only)
+    path("invoices/<int:invoice_id>/tax/", views.invoice_tax_view, name="invoice_tax"),
+    path("invoices/<int:invoice_id>/void/", views.invoice_void_view, name="invoice_void"),
+    path(
+        "invoices/<int:invoice_id>/undo-payment/",
+        views.invoice_undo_payment_view,
+        name="invoice_undo_payment",
+    ),
 
     # technician payroll (Administrator)
     path("payroll/", views.payroll_view, name="payroll"),

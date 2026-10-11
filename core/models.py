@@ -194,6 +194,14 @@ class Service(models.Model):
         validators=[MinValueValidator(1)],
         help_text="Estimated duration in minutes.",
     )
+    #: Retiring replaces deletion: appointments and invoices point at a service,
+    #: so a retired one stays on those records but is no longer offered for new
+    #: bookings or technician assignments.
+    IsActive = models.BooleanField(
+        default=True,
+        db_column="IsActive",
+        help_text="Retired services cannot be booked or assigned.",
+    )
 
     class Meta:
         db_table = "Services"
@@ -588,15 +596,30 @@ class Appointment(models.Model):
 # Work then moves forward in one direction only: Not Started -> In Progress ->
 # Completed. Skipping a step is refused, because "Completed" is what releases
 # the service bay and what Timebox 4 keys invoicing and payroll off.
+#
+# "Cancelled" is the way out when the customer withdraws: an Administrator can
+# cancel a job that is Not Started or In Progress, with a reason. It is not part
+# of the forward track, so it is reached only through ``cancel_repair`` and never
+# offered on the technician's status form. It releases the bay, and a cancelled
+# job cannot be invoiced.
 REPAIR_NOT_STARTED = "Not Started"
 REPAIR_IN_PROGRESS = "In Progress"
 REPAIR_COMPLETED = "Completed"
+REPAIR_CANCELLED = "Cancelled"
 
 #: ``choices`` for ``Repair.Status`` (stored as the label text).
 REPAIR_STATUSES = [
     (REPAIR_NOT_STARTED, "Not Started"),
     (REPAIR_IN_PROGRESS, "In Progress"),
     (REPAIR_COMPLETED, "Completed"),
+    (REPAIR_CANCELLED, "Cancelled"),
+]
+
+#: The forward track a job moves along, in order - everything but Cancelled.
+REPAIR_PROGRESS_STATUSES = [
+    REPAIR_NOT_STARTED,
+    REPAIR_IN_PROGRESS,
+    REPAIR_COMPLETED,
 ]
 
 #: Statuses that keep a job - and therefore its service bay - active. A bay
@@ -612,6 +635,9 @@ REPAIR_TRANSITIONS = {
     REPAIR_NOT_STARTED: [REPAIR_IN_PROGRESS],
     REPAIR_IN_PROGRESS: [REPAIR_COMPLETED],
     REPAIR_COMPLETED: [],
+    # Cancelling is not a step on this track (see ``cancel_repair``), and a
+    # cancelled job is finished.
+    REPAIR_CANCELLED: [],
 }
 
 #: Priority is a property of the *job*, not of the inspection: it is set once
@@ -758,6 +784,19 @@ class Inspection(models.Model):
         return [image for image in (self.Image1, self.Image2, self.Image3) if image]
 
     @property
+    def image_slots(self) -> list:
+        """``(slot_number, image)`` for each stored photograph, blanks dropped.
+
+        The slot number (1-3) names the column, so a single photograph can be
+        removed without shifting the others.
+        """
+        return [
+            (number, image)
+            for number, image in enumerate((self.Image1, self.Image2, self.Image3), 1)
+            if image
+        ]
+
+    @property
     def image_count(self) -> int:
         """How many of the three allowed photographs are in use."""
         return len(self.images)
@@ -835,7 +874,7 @@ class Repair(models.Model):
         db_column="Status",
         choices=REPAIR_STATUSES,
         default=REPAIR_NOT_STARTED,
-        help_text="Moves Not Started -> In Progress -> Completed.",
+        help_text="Moves Not Started -> In Progress -> Completed, or is Cancelled.",
     )
     #: Set once, the moment the job is moved to Completed (T4-DB-01). Payroll
     #: picks the period a job belongs to from *when the work finished*, not from
@@ -848,6 +887,18 @@ class Repair(models.Model):
         null=True,
         blank=True,
         help_text="Set once when the job reaches Completed; used by payroll.",
+    )
+    CancelReason = models.CharField(
+        max_length=255,
+        db_column="CancelReason",
+        blank=True,
+        help_text="Why an Administrator cancelled the job.",
+    )
+    CancelledAt = models.DateTimeField(
+        db_column="CancelledAt",
+        null=True,
+        blank=True,
+        help_text="Set when the job is cancelled.",
     )
     CreatedAt = models.DateTimeField(auto_now_add=True, db_column="CreatedAt")
     UpdatedAt = models.DateTimeField(auto_now=True, db_column="UpdatedAt")
@@ -880,6 +931,10 @@ class Repair(models.Model):
         return self.Status == REPAIR_COMPLETED
 
     @property
+    def is_cancelled(self) -> bool:
+        return self.Status == REPAIR_CANCELLED
+
+    @property
     def is_inspected(self) -> bool:
         """True once the technician has recorded the vehicle's condition."""
         return self.InspectionID_id is not None
@@ -899,6 +954,15 @@ class Repair(models.Model):
         """The customer's name, carried through from the appointment."""
         return self.AppointmentID.customer_name
 
+    @property
+    def invoice(self):
+        """The job's current bill, ignoring void ones, or ``None``.
+
+        A job may have void invoices on record, but at most one other: the
+        database enforces that with ``uq_invoices_repair_not_void``.
+        """
+        return self.invoices.exclude(PaymentStatus=PAYMENT_VOID).first()
+
 
 # ---------------------------------------------------------------------------
 # Inventory, invoicing and the customer status view (Timebox 4)
@@ -909,15 +973,19 @@ class Repair(models.Model):
 # rewrite a repair that has already been invoiced. The same holds for the
 # service's base cost on the invoice. History is a snapshot, never a live
 # recalculation.
-#: ``choices`` for ``Invoice.PaymentStatus``. Only two states exist: a bill is
-#: either awaiting the customer or settled. There is no "part paid", so the
-#: workshop never has to reason about a partially-collected invoice.
+#: ``choices`` for ``Invoice.PaymentStatus``. A bill is either awaiting the
+#: customer or settled. There is no "part paid", so the workshop never has to
+#: reason about a partially-collected invoice. "Void" marks a bill an
+#: Administrator cancelled as issued in error: it is kept for the record, can
+#: never be paid, and frees the repair job to be invoiced again.
 PAYMENT_PENDING = "Pending"
 PAYMENT_PAID = "Paid"
+PAYMENT_VOID = "Void"
 
 PAYMENT_STATUSES = [
     (PAYMENT_PENDING, "Pending"),
     (PAYMENT_PAID, "Paid"),
+    (PAYMENT_VOID, "Void"),
 ]
 
 #: How a bill may be settled. Cash is the only method the workshop accepts for
@@ -1121,9 +1189,10 @@ class PartsUsage(models.Model):
 class Invoice(models.Model):
     """The bill raised against a completed repair job (FR11).
 
-    ``RepairID`` is a one-to-one key: a job is billed once, and a second invoice
-    for the same job is refused by the database as well as by the service layer
-    (T4-INV-20). The link is to the *repair*, not to an individual parts-usage
+    A job is billed once: a second invoice for the same job is refused by the
+    database as well as by the service layer (T4-INV-20). The database rule is a
+    unique constraint on ``RepairID`` that skips voided invoices, so an invoice
+    voided by an Administrator stays on record while the job is billed again. The link is to the *repair*, not to an individual parts-usage
     row - that was the correction made to the earlier draft design - because a
     labour-only job with no parts recorded still has to be invoiceable.
 
@@ -1134,17 +1203,19 @@ class Invoice(models.Model):
     are calculated from it once and stored, which is what makes a printed bill
     reproducible later.
 
-    A Paid invoice is final (T4-INV-27): ``PaidAt`` records when it was settled
-    and no field may be edited afterwards.
+    A Paid invoice is final for the counter (T4-INV-27): ``PaidAt`` records when
+    it was settled. Only an Administrator can correct it afterwards, by undoing a
+    mistaken payment or voiding a Pending invoice, and each correction is
+    written to the audit log.
     """
 
     InvoiceID = models.AutoField(primary_key=True, db_column="InvoiceID")
-    RepairID = models.OneToOneField(
+    RepairID = models.ForeignKey(
         Repair,
         on_delete=models.PROTECT,
         db_column="RepairID",
-        related_name="invoice",
-        help_text="One invoice per repair job.",
+        related_name="invoices",
+        help_text="One invoice per repair job, not counting void ones.",
     )
     LabourCost = models.DecimalField(
         max_digits=10,
@@ -1211,6 +1282,18 @@ class Invoice(models.Model):
         blank=True,
         help_text="Set once, when the invoice is marked Paid.",
     )
+    VoidReason = models.CharField(
+        max_length=255,
+        db_column="VoidReason",
+        blank=True,
+        help_text="Why an Administrator voided the invoice.",
+    )
+    VoidedAt = models.DateTimeField(
+        db_column="VoidedAt",
+        null=True,
+        blank=True,
+        help_text="Set when the invoice is voided.",
+    )
 
     class Meta:
         db_table = "Invoices"
@@ -1226,6 +1309,12 @@ class Invoice(models.Model):
                 condition=models.Q(TotalAmount__gte=0),
                 name="ck_invoices_total_non_negative",
             ),
+            # One live bill per job; void ones are history and do not count.
+            models.UniqueConstraint(
+                fields=["RepairID"],
+                condition=~models.Q(PaymentStatus=PAYMENT_VOID),
+                name="uq_invoices_repair_not_void",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -1235,6 +1324,15 @@ class Invoice(models.Model):
     def is_paid(self) -> bool:
         """True once the customer has settled the bill."""
         return self.PaymentStatus == PAYMENT_PAID
+
+    @property
+    def is_void(self) -> bool:
+        """True once an Administrator has voided the bill."""
+        return self.PaymentStatus == PAYMENT_VOID
+
+    @property
+    def is_pending(self) -> bool:
+        return self.PaymentStatus == PAYMENT_PENDING
 
     @property
     def subtotal(self) -> Decimal:
@@ -1250,7 +1348,8 @@ class Invoice(models.Model):
 # table is append-only. Rows are never edited or deleted, so the history can be
 # used to settle a dispute (a scratch the customer says was not there, a bill
 # someone says was changed) rather than merely describe it.
-#: The kinds of record the audit trail covers: vehicle, job and financial data.
+#: The kinds of record the audit trail covers: vehicle, job and financial data,
+#: plus staff accounts, since those decide who can use the system at all.
 AUDIT_RECORD_TYPES = [
     "Vehicle",
     "Appointment",
@@ -1258,6 +1357,7 @@ AUDIT_RECORD_TYPES = [
     "Inspection",
     "Parts usage",
     "Invoice",
+    "Staff",
 ]
 
 #: The actions an entry may describe, kept here so the views and the tests quote
@@ -1269,6 +1369,11 @@ AUDIT_REASSIGNED = "Reassigned"
 AUDIT_STATUS_CHANGED = "Status changed"
 AUDIT_DELETED = "Deleted"
 AUDIT_PAID = "Paid"
+AUDIT_VOIDED = "Voided"
+AUDIT_CANCELLED = "Cancelled"
+AUDIT_DEACTIVATED = "Deactivated"
+AUDIT_REACTIVATED = "Reactivated"
+AUDIT_PAYMENT_UNDONE = "Payment undone"
 
 
 class AuditLogQuerySet(models.QuerySet):
@@ -1296,7 +1401,7 @@ class AuditLog(models.Model):
     entry still says who did it even if that account is later renamed.
 
     ``RecordType`` + ``RecordID`` stand in for a foreign key on purpose: one log
-    covers six tables, and the entry for a deleted vehicle has to outlive the
+    covers seven tables, and the entry for a deleted vehicle has to outlive the
     vehicle, which a real foreign key would either cascade away or block.
     """
 

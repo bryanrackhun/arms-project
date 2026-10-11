@@ -63,8 +63,13 @@ Context:
           <span class="alert__icon" aria-hidden="true">&#8505;</span>
           <div class="alert__body">
             <p class="alert__text">
-              This booking was <strong>cancelled</strong>, so there is no repair in
-              progress.
+              {% if status.is_repair_cancelled %}
+                The repair on your vehicle was <strong>cancelled</strong>, so no
+                further work will be done.
+              {% else %}
+                This booking was <strong>cancelled</strong>, so there is no repair in
+                progress.
+              {% endif %}
               {% if status.cancel_reason %}
                 Reason given: {{ status.cancel_reason }}.
               {% endif %}

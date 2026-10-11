@@ -108,7 +108,6 @@ class Command(BaseCommand):
             "AppointmentID__ServiceCode",
             "TechnicianID__StaffID",
             "InspectionID",
-            "invoice__GeneratedBy",
         ).prefetch_related("parts_usage__PartID", "parts_usage__RecordedBy")
         for repair in repairs.order_by("RepairID"):
             events.extend(self._job_timeline(repair))

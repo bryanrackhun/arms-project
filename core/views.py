@@ -51,17 +51,21 @@ from .forms import (
     InspectionForm,
     InvoiceFilterForm,
     InvoiceGenerateForm,
+    InvoiceTaxRateForm,
     LoginForm,
     MatchVehicleForm,
     PartForm,
     PartRestockForm,
     PartsUsageForm,
+    PasswordChangeForm,
     PayrollForm,
+    ProfileForm,
     RepairAssignmentForm,
     RepairFilterForm,
     RepairForm,
     RepairStatusForm,
     RepairStatusLookupForm,
+    ReasonForm,
     ReportForm,
     ServiceAssignmentForm,
     ServiceBayForm,
@@ -79,14 +83,19 @@ from .models import (
     APPOINTMENT_PENDING,
     APPOINTMENT_STATUSES,
     APPOINTMENT_TRANSITIONS,
+    AUDIT_CANCELLED,
     AUDIT_CHECKED_IN,
     AUDIT_CREATED,
+    AUDIT_DEACTIVATED,
     AUDIT_DELETED,
     AUDIT_PAID,
+    AUDIT_PAYMENT_UNDONE,
+    AUDIT_REACTIVATED,
     AUDIT_REASSIGNED,
     AUDIT_RECORD_TYPES,
     AUDIT_STATUS_CHANGED,
     AUDIT_UPDATED,
+    AUDIT_VOIDED,
     BAY_AVAILABLE,
     BAY_OCCUPIED,
     CURRENCY_CODE,
@@ -97,6 +106,7 @@ from .models import (
     REPAIR_COMPLETED,
     REPAIR_IN_PROGRESS,
     REPAIR_NOT_STARTED,
+    REPAIR_PROGRESS_STATUSES,
     REPAIR_STATUSES,
     REPAIR_TRANSITIONS,
     Appointment,
@@ -176,11 +186,12 @@ def home_view(request):
             "identity": None,
             # Shown so a customer can see what the workshop actually offers
             # before opening the booking form.
-            "services": Service.objects.order_by("ServiceName"),
-            "service_total": Service.objects.count(),
+            # Retired services are left out: they can no longer be booked.
+            "services": Service.objects.filter(IsActive=True).order_by("ServiceName"),
+            "service_total": Service.objects.filter(IsActive=True).count(),
             # "Popular" is measured by bookings; ties (and a new workshop with
             # no bookings yet) fall back to alphabetical order.
-            "popular_services": Service.objects.annotate(
+            "popular_services": Service.objects.filter(IsActive=True).annotate(
                 booking_count=Count("appointments")
             ).order_by("-booking_count", "ServiceName")[:4],
             "status_form": status_form,
@@ -353,19 +364,26 @@ def dashboard_view(request):
     return render(request, "core/dashboard.html", context)
 
 
-@require_auth
-def profile_view(request):
-    """'view own staff/technician profile' - allowed for every role."""
+def _own_staff(request) -> Staff | None:
+    """The signed-in account, or None when it no longer exists."""
     identity = _identity(request)
     if identity is None:
-        return redirect("core:login")
+        return None
     try:
-        staff = services.get_staff(identity["staff_id"])
+        return services.get_staff(identity["staff_id"])
     except NotFoundError:
-        messages.error(request, "Your account could not be found. Please log in again.")
-        services.logout(request.session)
-        return redirect("core:login")
+        return None
 
+
+def _lost_account(request):
+    """Sign out a session whose account has disappeared."""
+    messages.error(request, "Your account could not be found. Please log in again.")
+    services.logout(request.session)
+    return redirect("core:login")
+
+
+def _render_profile(request, staff: Staff, profile_form=None, password_form=None):
+    """Render the profile page, with bound forms when a submission failed."""
     technician = (
         Technician.objects.filter(StaffID=staff).select_related("StaffID").first()
     )
@@ -374,16 +392,109 @@ def profile_view(request):
         if technician
         else []
     )
+    if profile_form is None:
+        profile_form = ProfileForm(
+            initial={
+                "first_name": staff.FirstName,
+                "last_name": staff.LastName,
+                "email": staff.Email,
+                "phone": staff.Phone,
+            },
+            staff=staff,
+        )
     return render(
         request,
         "core/profile.html",
         {
-            "identity": identity,
+            "identity": _identity(request),
             "staff": staff,
             "technician": technician,
             "assigned_services": assigned_services,
+            "profile_form": profile_form,
+            "password_form": password_form or PasswordChangeForm(staff=staff),
         },
     )
+
+
+@require_auth
+def profile_view(request):
+    """'view own staff/technician profile' - allowed for every role."""
+    staff = _own_staff(request)
+    if staff is None:
+        return _lost_account(request)
+    return _render_profile(request, staff)
+
+
+@require_auth
+@require_POST
+def profile_update_view(request):
+    """Save the signed-in user's own contact details (every role).
+
+    Only name, email and phone are accepted; role and active status are not
+    fields of the form, so they cannot be changed from here.
+    """
+    staff = _own_staff(request)
+    if staff is None:
+        return _lost_account(request)
+
+    form = ProfileForm(request.POST, staff=staff)
+    if form.is_valid():
+        before = services.staff_snapshot(staff)
+        try:
+            staff = services.update_own_profile(
+                staff.StaffID,
+                first_name=form.cleaned_data["first_name"],
+                last_name=form.cleaned_data["last_name"],
+                email=form.cleaned_data["email"],
+                phone=form.cleaned_data.get("phone", ""),
+            )
+        except DuplicateError as error:
+            form.add_error("email", str(error))
+        except ServiceError as error:
+            _service_error(request, error)
+        else:
+            services.record_audit(
+                staff, AUDIT_UPDATED, "Staff", staff.StaffID,
+                f"{staff.full_name} updated their own details: "
+                f"{services.describe_staff_changes(before, staff, False)}.",
+            )
+            messages.success(request, "Your contact details were updated.")
+            return redirect("core:profile")
+    # Re-read the account so the summary card shows the stored values, not the
+    # rejected ones.
+    return _render_profile(request, services.get_staff(staff.StaffID), profile_form=form)
+
+
+@require_auth
+@require_POST
+def profile_password_view(request):
+    """Change the signed-in user's own password (every role)."""
+    staff = _own_staff(request)
+    if staff is None:
+        return _lost_account(request)
+
+    form = PasswordChangeForm(request.POST, staff=staff)
+    if form.is_valid():
+        try:
+            services.change_own_password(
+                staff.StaffID,
+                current_password=form.cleaned_data["current_password"],
+                new_password=form.cleaned_data["new_password"],
+                confirm_password=form.cleaned_data["confirm_password"],
+            )
+        except ServiceError as error:
+            _service_error(request, error)
+        else:
+            # A new session key after a credential change, so a copied session
+            # cookie stops working once the owner has changed their password.
+            request.session.cycle_key()
+            services.record_audit(
+                staff, AUDIT_UPDATED, "Staff", staff.StaffID,
+                f"{staff.full_name} changed their own password.",
+            )
+            messages.success(request, "Your password was changed.")
+            return redirect("core:profile")
+    return _render_profile(request, staff, password_form=form)
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +549,11 @@ def staff_create_view(request):
             except ServiceError as error:
                 _service_error(request, error)
             else:
+                services.record_audit(
+                    _current_staff(request), AUDIT_CREATED, "Staff", staff.StaffID,
+                    f"Staff account created for {staff.full_name} "
+                    f"({staff.role_name}, {staff.Email}).",
+                )
                 messages.success(request, f"Staff account created for {staff.full_name}.")
                 return redirect("core:staff_list")
 
@@ -466,8 +582,9 @@ def staff_edit_view(request, staff_id: int):
     if request.method == "POST":
         form = StaffForm(request.POST, staff=staff)
         if form.is_valid():
+            before = services.staff_snapshot(staff)
             try:
-                services.update_staff(
+                updated = services.update_staff(
                     staff_id=staff.StaffID,
                     first_name=form.cleaned_data["first_name"],
                     last_name=form.cleaned_data["last_name"],
@@ -481,6 +598,14 @@ def staff_edit_view(request, staff_id: int):
             except ServiceError as error:
                 _service_error(request, error)
             else:
+                services.record_audit(
+                    _current_staff(request), AUDIT_UPDATED, "Staff", updated.StaffID,
+                    f"Staff account {updated.full_name} updated: "
+                    + services.describe_staff_changes(
+                        before, updated, bool(form.new_password)
+                    )
+                    + ".",
+                )
                 messages.success(request, f"Staff account {staff.full_name} updated.")
                 return redirect("core:staff_list")
     else:
@@ -529,6 +654,10 @@ def staff_deactivate_view(request, staff_id: int):
     except ServiceError as error:
         _service_error(request, error)
     else:
+        services.record_audit(
+            _current_staff(request), AUDIT_DEACTIVATED, "Staff", staff.StaffID,
+            f"Staff account {staff.full_name} deactivated; it can no longer log in.",
+        )
         messages.success(
             request, f"{staff.full_name} was deactivated and can no longer log in."
         )
@@ -542,12 +671,14 @@ def staff_reactivate_view(request, staff_id: int):
     if request.method != "POST":
         return redirect("core:staff_list")
     try:
-        staff = services.get_staff(staff_id)
-        staff.IsActive = True
-        staff.save(update_fields=["IsActive"])
+        staff = services.reactivate_staff(staff_id)
     except NotFoundError as error:
         messages.error(request, str(error))
     else:
+        services.record_audit(
+            _current_staff(request), AUDIT_REACTIVATED, "Staff", staff.StaffID,
+            f"Staff account {staff.full_name} reactivated.",
+        )
         messages.success(request, f"{staff.full_name} was re-activated.")
     return redirect("core:staff_list")
 
@@ -876,6 +1007,38 @@ def service_edit_view(request, service_code: int):
     )
 
 
+@require_auth
+@admin_only
+@require_POST
+def service_deactivate_view(request, service_code: int):
+    """Retire a service: hidden from booking and assignment, kept on history."""
+    try:
+        service = services.deactivate_service(service_code)
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        messages.success(
+            request,
+            f"Service '{service.ServiceName}' was retired and can no longer be "
+            "booked or assigned.",
+        )
+    return redirect("core:service_list")
+
+
+@require_auth
+@admin_only
+@require_POST
+def service_reactivate_view(request, service_code: int):
+    """Offer a retired service again."""
+    try:
+        service = services.reactivate_service(service_code)
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        messages.success(request, f"Service '{service.ServiceName}' is offered again.")
+    return redirect("core:service_list")
+
+
 
 # ---------------------------------------------------------------------------
 # Public online booking (Timebox 2 - no login required)
@@ -901,7 +1064,7 @@ def booking_view(request):
         if preset_service:
             form = BookingForm(
                 initial={"service": Service.objects.filter(
-                    Service_code=preset_service
+                    Service_code=preset_service, IsActive=True
                 ).first()}
             )
     if request.method == "POST":
@@ -936,7 +1099,10 @@ def booking_view(request):
     return render(
         request,
         "core/booking.html",
-        {"form": form, "services": Service.objects.order_by("ServiceName")},
+        {
+            "form": form,
+            "services": Service.objects.filter(IsActive=True).order_by("ServiceName"),
+        },
     )
 
 
@@ -1621,7 +1787,11 @@ def _progress_steps(repair: Repair) -> list[dict]:
     track cannot disagree with ``REPAIR_TRANSITIONS`` if the lifecycle is ever
     extended.
     """
-    order = [value for value, _label in REPAIR_STATUSES]
+    order = REPAIR_PROGRESS_STATUSES
+    if repair.is_cancelled:
+        # A cancelled job left the track, so no step is current; the page
+        # shows the cancellation separately.
+        return [{"label": label, "state": "todo"} for label in order]
     reached = order.index(repair.Status)
     return [
         {
@@ -1632,7 +1802,7 @@ def _progress_steps(repair: Repair) -> list[dict]:
                 else "todo"
             ),
         }
-        for index, (_value, label) in enumerate(REPAIR_STATUSES)
+        for index, label in enumerate(order)
     ]
 
 
@@ -1880,6 +2050,10 @@ def repair_detail_view(request, repair_id: int):
     if context["can_record_parts"]:
         context["parts_form"] = PartsUsageForm(repair=repair)
     if context["is_admin"]:
+        context["can_cancel"] = repair.is_active
+        context["cancel_form"] = ReasonForm(
+            prefix="cancel", placeholder="Why is this job being cancelled?"
+        )
         context["assignment_form"] = RepairAssignmentForm(repair=repair)
         # Which technicians are qualified for this job's service, so the detail
         # screen can say why a re-assignment failed without leaving the page.
@@ -1961,6 +2135,36 @@ def repair_status_view(request, repair_id: int):
         messages.error(request, "Choose a valid status transition.")
 
     return _repair_back(request, repair)
+
+
+@require_auth
+@repair_manager
+@require_POST
+def repair_cancel_view(request, repair_id: int):
+    """Cancel a Not Started or In Progress job, with a required reason."""
+    form = ReasonForm(request.POST, prefix="cancel")
+    if not form.is_valid():
+        _form_error(request, form)
+        return redirect("core:repair_detail", repair_id=repair_id)
+
+    staff = _current_staff(request)
+    try:
+        repair = services.cancel_repair(repair_id, form.cleaned_data["reason"], staff)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:repair_list")
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        bay_note = (
+            f" {repair.BayID.BayName} is available again." if repair.BayID else ""
+        )
+        services.record_audit(
+            staff, AUDIT_CANCELLED, "Repair", repair.pk,
+            f"Repair job cancelled.{bay_note} Reason: {repair.CancelReason}",
+        )
+        messages.success(request, f"Repair job #{repair.pk} was cancelled.{bay_note}")
+    return redirect("core:repair_detail", repair_id=repair_id)
 
 
 def _repair_back(request, repair: Repair):
@@ -2199,6 +2403,77 @@ def inspection_edit_view(request, repair_id: int):
             "inspection": repair.InspectionID,
         },
     )
+
+
+@require_auth
+@repair_viewer
+@require_POST
+def inspection_image_remove_view(request, repair_id: int, slot: int):
+    """Remove one photograph from a job's inspection (assigned Technician, Admin)."""
+    try:
+        repair = services.get_repair(repair_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:repair_list")
+
+    staff = _current_staff(request)
+    if not services.can_manage_repair(repair, staff):
+        return _repair_denied(
+            request,
+            "Access denied: you can only change inspections on jobs assigned to you.",
+        )
+
+    try:
+        repair, inspection = services.remove_inspection_image(repair_id, staff, slot)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:repair_detail", repair_id=repair_id)
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        services.record_audit(
+            staff, AUDIT_UPDATED, "Inspection", inspection.pk,
+            f"Photograph {slot} removed from the inspection for repair job "
+            f"#{repair.pk}.",
+        )
+        messages.success(request, f"Photograph {slot} was removed.")
+    return redirect("core:inspection_edit", repair_id=repair_id)
+
+
+@require_auth
+@repair_viewer
+@require_POST
+def inspection_delete_view(request, repair_id: int):
+    """Delete a job's inspection while the job is Not Started."""
+    try:
+        repair = services.get_repair(repair_id)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:repair_list")
+
+    staff = _current_staff(request)
+    if not services.can_manage_repair(repair, staff):
+        return _repair_denied(
+            request,
+            "Access denied: you can only change inspections on jobs assigned to you.",
+        )
+
+    try:
+        inspection_id = services.delete_inspection(repair_id, staff)
+    except NotFoundError as error:
+        messages.error(request, str(error))
+    except ServiceError as error:
+        _service_error(request, error)
+        return redirect("core:inspection_edit", repair_id=repair_id)
+    else:
+        services.record_audit(
+            staff, AUDIT_DELETED, "Inspection", inspection_id,
+            f"Inspection for repair job #{repair.pk} deleted, with its photographs.",
+        )
+        messages.success(
+            request, f"The inspection for repair job #{repair.pk} was deleted."
+        )
+    return redirect("core:repair_detail", repair_id=repair_id)
 
 
 # ---------------------------------------------------------------------------
@@ -2958,9 +3233,126 @@ def invoice_detail_view(request, invoice_id: int):
             # prices - read rather than recalculated, so what is shown is what was
             # billed.
             "parts_usage": services.list_parts_usage(repair.pk),
-            "can_mark_paid": not invoice.is_paid,
+            "can_mark_paid": invoice.is_pending,
+            # Corrections are Administrator-only; the forms are only built for
+            # the states they apply to, so the page never offers a refused action.
+            "can_correct": request.session.get(services.SESSION_KEY_ROLE_NAME)
+            == Role.ADMINISTRATOR,
+            "tax_form": InvoiceTaxRateForm(initial={"tax_rate": invoice.TaxRate}),
+            "void_form": ReasonForm(
+                prefix="void", placeholder="Why is this invoice being voided?"
+            ),
+            "undo_form": ReasonForm(
+                prefix="undo", placeholder="Why was the payment recorded by mistake?"
+            ),
         },
     )
+
+
+def _form_error(request, form) -> None:
+    """Show the first validation error of a small one-field form."""
+    for errors in form.errors.values():
+        messages.warning(request, errors[0])
+        return
+
+
+@require_auth
+@admin_only
+@require_POST
+def invoice_tax_view(request, invoice_id: int):
+    """Correct a Pending invoice's tax rate and recalculate the total."""
+    form = InvoiceTaxRateForm(request.POST)
+    if not form.is_valid():
+        _form_error(request, form)
+        return redirect("core:invoice_detail", invoice_id=invoice_id)
+
+    staff = _current_staff(request)
+    try:
+        invoice, old_rate = services.update_invoice_tax_rate(
+            invoice_id, form.cleaned_data["tax_rate"], staff
+        )
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:invoice_list")
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        services.record_audit(
+            staff, AUDIT_UPDATED, "Invoice", invoice.pk,
+            f"Tax rate corrected from {old_rate}% to {invoice.TaxRate}%; tax now "
+            f"{invoice.TaxAmount}, total {CURRENCY_CODE} {invoice.TotalAmount}.",
+        )
+        messages.success(
+            request,
+            f"Invoice #{invoice.pk} tax rate changed to {invoice.TaxRate}%. "
+            f"New total: {CURRENCY_CODE} {invoice.TotalAmount}.",
+        )
+    return redirect("core:invoice_detail", invoice_id=invoice_id)
+
+
+@require_auth
+@admin_only
+@require_POST
+def invoice_void_view(request, invoice_id: int):
+    """Void a Pending invoice issued in error, with a required reason."""
+    form = ReasonForm(request.POST, prefix="void")
+    if not form.is_valid():
+        _form_error(request, form)
+        return redirect("core:invoice_detail", invoice_id=invoice_id)
+
+    staff = _current_staff(request)
+    try:
+        invoice = services.void_invoice(
+            invoice_id, form.cleaned_data["reason"], staff
+        )
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:invoice_list")
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        services.record_audit(
+            staff, AUDIT_VOIDED, "Invoice", invoice.pk,
+            f"Invoice voided (total {CURRENCY_CODE} {invoice.TotalAmount}). "
+            f"Reason: {invoice.VoidReason}",
+        )
+        messages.success(
+            request,
+            f"Invoice #{invoice.pk} was voided. Repair job #{invoice.RepairID_id} "
+            "can now be invoiced again.",
+        )
+    return redirect("core:invoice_detail", invoice_id=invoice_id)
+
+
+@require_auth
+@admin_only
+@require_POST
+def invoice_undo_payment_view(request, invoice_id: int):
+    """Put a mistakenly Paid invoice back to Pending, with a required reason."""
+    form = ReasonForm(request.POST, prefix="undo")
+    if not form.is_valid():
+        _form_error(request, form)
+        return redirect("core:invoice_detail", invoice_id=invoice_id)
+
+    staff = _current_staff(request)
+    try:
+        invoice, reason = services.undo_invoice_payment(
+            invoice_id, form.cleaned_data["reason"], staff
+        )
+    except NotFoundError as error:
+        messages.error(request, str(error))
+        return redirect("core:invoice_list")
+    except ServiceError as error:
+        _service_error(request, error)
+    else:
+        services.record_audit(
+            staff, AUDIT_PAYMENT_UNDONE, "Invoice", invoice.pk,
+            f"Payment undone; invoice back to Pending. Reason: {reason}",
+        )
+        messages.success(
+            request, f"Invoice #{invoice.pk} is back to Pending."
+        )
+    return redirect("core:invoice_detail", invoice_id=invoice_id)
 
 
 @require_auth
@@ -3110,13 +3502,14 @@ AUDIT_RECORD_URLS = {
     "Appointment": "core:appointment_detail",
     "Repair": "core:repair_detail",
     "Invoice": "core:invoice_detail",
+    "Staff": "core:staff_edit",
 }
 
 
 @require_auth
 @admin_only
 def audit_log_view(request):
-    """Read-only list of changes to vehicle, job and financial records.
+    """Read-only list of changes to vehicle, job, financial and staff records.
 
     There is deliberately no edit or delete action anywhere on this page, and
     the model refuses both regardless. An unknown record type in the query

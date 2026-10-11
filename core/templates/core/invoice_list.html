@@ -134,6 +134,8 @@
             <td>
               {% if invoice.is_paid %}
                 <span class="badge badge--active" title="Paid {{ invoice.PaidAt }}">Paid</span>
+              {% elif invoice.is_void %}
+                <span class="badge badge--inactive" title="{{ invoice.VoidReason }}">Void</span>
               {% else %}
                 <span class="badge badge--pending">Pending</span>
               {% endif %}

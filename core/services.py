@@ -53,7 +53,9 @@ from .models import (
     PAYMENT_PAID,
     PAYMENT_PENDING,
     PAYMENT_STATUSES,
+    PAYMENT_VOID,
     REFERENCE_CODE_MAX_ATTEMPTS,
+    REPAIR_CANCELLED,
     REPAIR_COMPLETED,
     REPAIR_IN_PROGRESS,
     REPAIR_NOT_STARTED,
@@ -446,6 +448,108 @@ def deactivate_staff(staff_id: int) -> Staff:
     return staff
 
 
+def reactivate_staff(staff_id: int) -> Staff:
+    """Let a deactivated account log in again."""
+    staff = get_staff(staff_id)
+    staff.IsActive = True
+    staff.save(update_fields=["IsActive"])
+    return staff
+
+
+def describe_staff_changes(before: dict, staff: Staff, password_changed: bool) -> str:
+    """Summarise what an edit changed on a staff account, for the audit log.
+
+    ``before`` is :func:`staff_snapshot` taken before the edit. The password is
+    only ever reported as changed, never quoted.
+    """
+    after = staff_snapshot(staff)
+    changes = [
+        f"{label} changed from '{before[key]}' to '{after[key]}'"
+        for key, label in (
+            ("name", "name"),
+            ("email", "email"),
+            ("phone", "phone"),
+            ("role", "role"),
+        )
+        if before[key] != after[key]
+    ]
+    if password_changed:
+        changes.append("password reset")
+    return "; ".join(changes) if changes else "no changes"
+
+
+def staff_snapshot(staff: Staff) -> dict:
+    """The audited fields of a staff account, for before/after comparison."""
+    return {
+        "name": staff.full_name,
+        "email": staff.Email,
+        "phone": staff.Phone,
+        "role": staff.role_name,
+    }
+
+
+def update_own_profile(
+    staff_id: int,
+    first_name: str,
+    last_name: str,
+    email: str,
+    phone: str = "",
+) -> Staff:
+    """Let a signed-in member of staff change their own contact details.
+
+    Role and active status are deliberately not parameters: they decide what
+    the account may do, so only an Administrator changes them, through
+    :func:`update_staff`. The same validation rules apply as on the
+    administrator's form, including the unique email check.
+    """
+    staff = get_staff(staff_id)
+    first_name, last_name = _validate_names(first_name, last_name)
+    email = _validate_email(email, exclude_staff_id=staff_id)
+    phone = _validate_phone(phone)
+
+    try:
+        with transaction.atomic():
+            staff.FirstName = first_name
+            staff.LastName = last_name
+            staff.Email = email
+            staff.Phone = phone
+            staff.save(update_fields=["FirstName", "LastName", "Email", "Phone"])
+        return staff
+    except Exception:
+        logger.exception("Profile update failed for StaffID=%s.", staff_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+
+def change_own_password(
+    staff_id: int,
+    current_password: str,
+    new_password: str,
+    confirm_password: str,
+) -> Staff:
+    """Change a staff member's own password after checking the current one.
+
+    The current password is required even though the user is signed in, so
+    someone using an unattended session cannot lock the owner out. The new
+    password is stored as a salted hash through :func:`hash_password`, the same
+    way an administrator sets one.
+    """
+    staff = get_staff(staff_id)
+    if not verify_password(current_password, staff.Password):
+        raise ValidationError("Your current password is incorrect.")
+    if (new_password or "") != (confirm_password or ""):
+        raise ValidationError("The new passwords do not match.")
+    hashed = hash_password(new_password)  # enforces the minimum length
+
+    try:
+        with transaction.atomic():
+            staff.Password = hashed
+            staff.save(update_fields=["Password"])
+        return staff
+    except Exception:
+        logger.exception("Password change failed for StaffID=%s.", staff_id)
+        raise ServiceError("Something went wrong, please try again.")
+
+
 # ---------------------------------------------------------------------------
 # Technician module
 # ---------------------------------------------------------------------------
@@ -536,6 +640,10 @@ def assign_service(technician_id: int, service_code: int) -> TechnicianService:
         service = Service.objects.get(pk=service_code)
     except Service.DoesNotExist as exc:
         raise NotFoundError("That service does not exist.") from exc
+    if not service.IsActive:
+        raise ValidationError(
+            f"'{service.ServiceName}' has been retired and cannot be assigned."
+        )
 
     if TechnicianService.objects.filter(
         TechnicianID=technician, ServiceCode=service
@@ -587,9 +695,37 @@ def list_technicians_for_service(service_code: int) -> list[Technician]:
     )
 
 
-def list_services() -> list[Service]:
+def list_services(include_inactive: bool = True) -> list[Service]:
     """Return all services — used to populate the assignment form."""
-    return list(Service.objects.all())
+    queryset = Service.objects.all()
+    if not include_inactive:
+        queryset = queryset.filter(IsActive=True)
+    return list(queryset)
+
+
+def deactivate_service(service_code: int) -> Service:
+    """Retire a service instead of deleting it.
+
+    Appointments ``PROTECT`` their service and invoices copy its cost, so a
+    hard delete would either fail or break history. A retired service stays on
+    those records but is no longer offered for booking or assignment.
+    """
+    service = get_service(service_code)
+    if not service.IsActive:
+        raise ValidationError(f"'{service.ServiceName}' is already retired.")
+    service.IsActive = False
+    service.save(update_fields=["IsActive"])
+    return service
+
+
+def reactivate_service(service_code: int) -> Service:
+    """Offer a retired service again."""
+    service = get_service(service_code)
+    if service.IsActive:
+        raise ValidationError(f"'{service.ServiceName}' is already active.")
+    service.IsActive = True
+    service.save(update_fields=["IsActive"])
+    return service
 
 
 def _validate_service_fields(
@@ -782,6 +918,13 @@ def get_service(service_code: int) -> Service:
         raise NotFoundError("The selected service does not exist.") from exc
 
 
+def _require_active_service(service: Service) -> None:
+    """Refuse a retired service for a new booking or a change of service."""
+    if not service.IsActive:
+        raise ValidationError(
+            f"'{service.ServiceName}' is no longer offered. Choose another service."
+        )
+
 
 def _validate_booking_vehicle(car_model: str, license_plate: str) -> tuple[str, str]:
     """Booking-time vehicle details: both the model and the plate are required.
@@ -865,6 +1008,7 @@ def book_appointment(
     first_name, last_name = _validate_customer_name(first_name, last_name)
     phone, email = _validate_customer_contact(phone, email)
     service = get_service(service_code)  # cannot book without a valid service
+    _require_active_service(service)
     appointment_date, appointment_time = _validate_slot(
         appointment_date, appointment_time
     )
@@ -1046,7 +1190,12 @@ def update_appointment(
         appointment.CustomerEmail = email
 
     if service_code is not None:
-        appointment.ServiceCode = get_service(service_code)
+        service = get_service(service_code)
+        # Keeping a service that has since been retired is allowed: the booking
+        # was made while it was offered. Switching *to* a retired one is not.
+        if service.pk != appointment.ServiceCode_id:
+            _require_active_service(service)
+        appointment.ServiceCode = service
 
     if appointment_date is not None or appointment_time is not None:
         new_date = appointment_date or appointment.AppointmentDate
@@ -1958,6 +2107,11 @@ def assign_technician(repair_id: int, technician_id: int) -> Repair:
             "A completed repair job can no longer be reassigned to another "
             "technician."
         )
+    if repair.is_cancelled:
+        raise ValidationError(
+            "A cancelled repair job can no longer be reassigned to another "
+            "technician."
+        )
 
     technician = _validate_repair_technician(
         technician_id, repair.AppointmentID.ServiceCode
@@ -1999,6 +2153,10 @@ def assign_bay(repair_id: int, bay_id: int) -> Repair:
     if repair.is_completed:
         raise ValidationError(
             "A completed repair job can no longer be moved to another bay."
+        )
+    if repair.is_cancelled:
+        raise ValidationError(
+            "A cancelled repair job can no longer be moved to another bay."
         )
 
     bay = _validate_repair_bay(bay_id, exclude_repair_id=repair.pk)
@@ -2146,6 +2304,47 @@ def set_repair_status(repair_id: int, new_status: str) -> Repair:
             new_status,
         )
         raise ServiceError("Something went wrong, please try again.")
+
+
+def cancel_repair(repair_id: int, reason: str, staff: Staff) -> Repair:
+    """Cancel a job the customer has withdrawn from (Administrator only).
+
+    Allowed only while the job is Not Started or In Progress: a Completed job
+    has been done, and may already be billed. Cancelling records the reason and
+    the time, and releases the job's bay in the same transaction, so a bay is
+    never left Occupied by work that will not happen. The bay stays named on the
+    job as history. A cancelled job can never be invoiced, because invoicing
+    requires Completed.
+    """
+    _require_admin(staff, "cancel a repair job")
+    repair = get_repair(repair_id)
+    text = _validate_reason(reason, "cancel a repair job")
+    if repair.Status not in ACTIVE_REPAIR_STATUSES:
+        raise ValidationError(
+            f"Repair job #{repair.pk} is {repair.Status.lower()}; only a job that "
+            "is Not Started or In Progress can be cancelled."
+        )
+
+    try:
+        with transaction.atomic():
+            updated = Repair.objects.filter(
+                pk=repair.pk, Status__in=ACTIVE_REPAIR_STATUSES
+            ).update(
+                Status=REPAIR_CANCELLED,
+                CancelReason=text,
+                CancelledAt=dj_timezone.now(),
+                UpdatedAt=dj_timezone.now(),
+            )
+            if updated:
+                _refresh_bay_status(repair.BayID_id)
+    except Exception:
+        logger.exception("Repair cancellation failed (RepairID=%s).", repair_id)
+        raise ServiceError("Something went wrong, please try again.")
+    if not updated:
+        raise ValidationError(
+            f"Repair job #{repair.pk} changed status meanwhile and was not cancelled."
+        )
+    return get_repair(repair.pk)
 
 
 def start_repair(repair_id: int) -> Repair:
@@ -2321,6 +2520,96 @@ def update_inspection(
     except Exception:
         logger.exception("Inspection update failed (RepairID=%s).", repair_id)
         raise ServiceError("Something went wrong, please try again.")
+
+
+def _delete_stored_files(files) -> None:
+    """Delete image files from storage once the database change has committed.
+
+    Deferred to commit, so a rolled-back change never loses a photograph its
+    row still points at. A storage failure is logged rather than raised: the
+    record is already correct, and an orphaned file is the lesser problem.
+    """
+    def _delete():
+        for storage, name in files:
+            try:
+                storage.delete(name)
+            except Exception:  # noqa: BLE001 - never fail after the commit
+                logger.exception("Could not delete stored file %s.", name)
+
+    if files:
+        transaction.on_commit(_delete)
+
+
+def _inspection_for_change(repair_id: int, staff: Staff) -> tuple[Repair, Inspection]:
+    """The job and its inspection, once ``staff`` is allowed to change it."""
+    repair = get_repair(repair_id)
+    _require_repair_technician(repair, staff)
+    if repair.InspectionID_id is None:
+        raise NotFoundError("That repair job has no inspection.")
+    return repair, get_inspection(repair.InspectionID_id)
+
+
+def remove_inspection_image(
+    repair_id: int, staff: Staff, slot: int
+) -> tuple[Repair, Inspection]:
+    """Remove one photograph (slot 1-3) from a job's inspection (FR7).
+
+    Same ownership rule as recording the inspection: the assigned technician
+    or an Administrator. The column is cleared, so the slot is free for a new
+    upload, and the image file is deleted from storage.
+    """
+    repair, inspection = _inspection_for_change(repair_id, staff)
+    if slot not in range(1, MAX_INSPECTION_IMAGES + 1):
+        raise ValidationError(
+            f"Photograph {slot} does not exist; slots are 1 to {MAX_INSPECTION_IMAGES}."
+        )
+    field = _INSPECTION_IMAGE_FIELDS[slot - 1]
+    image = getattr(inspection, field)
+    if not image:
+        raise ValidationError(f"There is no photograph {slot} to remove.")
+
+    stored = (image.storage, image.name)
+    try:
+        with transaction.atomic():
+            setattr(inspection, field, None)
+            inspection.save(update_fields=[field, "UpdatedAt"])
+            _delete_stored_files([stored])
+    except Exception:
+        logger.exception(
+            "Inspection photo removal failed (RepairID=%s, slot=%s).", repair_id, slot
+        )
+        raise ServiceError("Something went wrong, please try again.")
+    return repair, inspection
+
+
+def delete_inspection(repair_id: int, staff: Staff) -> int:
+    """Delete a job's inspection while the job is still Not Started (FR7).
+
+    Once work has started the inspection is the record of the vehicle's
+    condition the work began from, so it can only be amended, not removed.
+    ``Repairs.InspectionID`` is cleared first (the link is ``PROTECT``ed), then
+    the row and its image files are deleted. Returns the deleted inspection's id.
+    """
+    repair, inspection = _inspection_for_change(repair_id, staff)
+    if repair.Status != REPAIR_NOT_STARTED:
+        raise ValidationError(
+            f"Repair job #{repair.pk} is {repair.Status.lower()}; an inspection can "
+            "only be deleted while the job is Not Started."
+        )
+
+    inspection_id = inspection.pk
+    stored = [(image.storage, image.name) for image in inspection.images]
+    try:
+        with transaction.atomic():
+            Repair.objects.filter(InspectionID=inspection).update(
+                InspectionID=None, UpdatedAt=dj_timezone.now()
+            )
+            inspection.delete()
+            _delete_stored_files(stored)
+    except Exception:
+        logger.exception("Inspection deletion failed (RepairID=%s).", repair_id)
+        raise ServiceError("Something went wrong, please try again.")
+    return inspection_id
 
 
 def get_inspection(inspection_id: int) -> Inspection:
@@ -2905,14 +3194,26 @@ def calculate_invoice_amounts(labour_cost, parts_cost, tax_rate) -> dict:
 
 
 def invoice_for_repair(repair_id: int) -> Invoice | None:
-    """Return a job's invoice, or ``None`` if it has not been billed yet."""
+    """Return a job's current invoice, or ``None`` if it has not been billed yet.
+
+    Void invoices are ignored: once voided, the job counts as not billed.
+    """
     get_repair(repair_id)
     return (
         Invoice.objects.select_related(
             "RepairID", "RepairID__AppointmentID", "GeneratedBy"
         )
         .filter(RepairID_id=repair_id)
+        .exclude(PaymentStatus=PAYMENT_VOID)
         .first()
+    )
+
+
+def list_void_invoices_for_repair(repair_id: int) -> list[Invoice]:
+    """Return a job's void invoices, newest first, for its history."""
+    return list(
+        Invoice.objects.filter(RepairID_id=repair_id, PaymentStatus=PAYMENT_VOID)
+        .order_by("-GeneratedAt", "-InvoiceID")
     )
 
 
@@ -3031,7 +3332,9 @@ def generate_invoice(
             "only be generated once the job is Completed."
         )
 
-    if Invoice.objects.filter(RepairID=repair).exists():
+    if Invoice.objects.filter(RepairID=repair).exclude(
+        PaymentStatus=PAYMENT_VOID
+    ).exists():
         raise DuplicateError(
             f"Repair job #{repair.pk} has already been invoiced. A repair job can "
             "only have one invoice."
@@ -3086,7 +3389,9 @@ def mark_invoice_paid(invoice_id: int, staff: Staff) -> Invoice:
     when the money was collected. Settling an already-Paid invoice is refused
     rather than quietly ignored, so ``PaidAt`` can never be moved to a later date
     and rewrite when the customer actually paid. That refusal is also what makes a
-    Paid invoice final (T4-INV-27): there is no code path back to Pending.
+    Paid invoice final at the counter (T4-INV-27); only an Administrator can undo
+    a mistaken payment, through :func:`undo_invoice_payment`. A void invoice can
+    never be paid.
 
     Cash is the only method the counter takes, so settling records Cash, whether
     or not the customer chose it online first.
@@ -3098,6 +3403,8 @@ def mark_invoice_paid(invoice_id: int, staff: Staff) -> Invoice:
         )
 
     invoice = get_invoice(invoice_id)
+    if invoice.is_void:
+        raise ValidationError(f"Invoice #{invoice.pk} is void and cannot be paid.")
     if invoice.is_paid:
         raise ValidationError(
             f"Invoice #{invoice.pk} is already marked Paid. A paid invoice is "
@@ -3116,6 +3423,144 @@ def mark_invoice_paid(invoice_id: int, staff: Staff) -> Invoice:
     except Exception:
         logger.exception("Invoice payment failed (InvoiceID=%s).", invoice_id)
         raise ServiceError("Something went wrong, please try again.")
+
+
+# ---------------------------------------------------------------------------
+# Invoice corrections (Administrator only)
+# ---------------------------------------------------------------------------
+#   * the tax rate can be corrected only while the bill is Pending, and the
+#     total is recalculated from the stored labour and parts amounts with
+#     :func:`calculate_invoice_amounts`, the same calculation generation uses;
+#   * a Pending bill can be voided with a reason. It stays on record, can never
+#     be paid, and the job can be billed again;
+#   * a mistaken "Paid" can be undone back to Pending with a reason;
+#   * the view writes each correction to the audit log.
+# ---------------------------------------------------------------------------
+def _require_admin(staff: Staff, action: str) -> None:
+    """Refuse unless ``staff`` holds the Administrator role."""
+    if staff is None or staff.role_name != Role.ADMINISTRATOR:
+        raise AuthorizationError(f"Only an Administrator can {action}.")
+
+
+def _validate_reason(reason: str, what: str) -> str:
+    """A required free-text reason, at most 255 characters."""
+    text = " ".join((reason or "").split())
+    if not text:
+        raise ValidationError(f"A reason is required to {what}.")
+    if len(text) > 255:
+        raise ValidationError("The reason must be 255 characters or fewer.")
+    return text
+
+
+def update_invoice_tax_rate(invoice_id: int, tax_rate, staff: Staff) -> tuple:
+    """Correct a Pending invoice's tax rate and recalculate its total.
+
+    Returns ``(invoice, old_rate)`` so the caller can describe the change.
+    Labour and parts stay as they were frozen at generation; only the tax and
+    the total move.
+    """
+    _require_admin(staff, "correct an invoice")
+    invoice = get_invoice(invoice_id)
+    if not invoice.is_pending:
+        raise ValidationError(
+            f"Invoice #{invoice.pk} is {invoice.PaymentStatus.lower()}; the tax "
+            "rate can only be changed while it is Pending."
+        )
+
+    amounts = calculate_invoice_amounts(
+        invoice.LabourCost, invoice.PartsCost, tax_rate
+    )
+    old_rate = invoice.TaxRate
+    if amounts["tax_rate"] == old_rate:
+        raise ValidationError(f"The tax rate is already {old_rate}%.")
+
+    try:
+        with transaction.atomic():
+            # Conditional write: if the bill is paid or voided between the read
+            # above and this update, nothing changes.
+            updated = Invoice.objects.filter(
+                pk=invoice.pk, PaymentStatus=PAYMENT_PENDING
+            ).update(
+                TaxRate=amounts["tax_rate"],
+                TaxAmount=amounts["tax_amount"],
+                TotalAmount=amounts["total_amount"],
+            )
+    except Exception:
+        logger.exception("Invoice tax correction failed (InvoiceID=%s).", invoice_id)
+        raise ServiceError("Something went wrong, please try again.")
+    if not updated:
+        raise ValidationError(
+            f"Invoice #{invoice.pk} is no longer Pending, so it was not changed."
+        )
+    return get_invoice(invoice.pk), old_rate
+
+
+def void_invoice(invoice_id: int, reason: str, staff: Staff) -> Invoice:
+    """Void a Pending invoice issued in error, recording why.
+
+    The row is kept, so the bill and the reason stay on record. A void invoice
+    can never be paid, and the repair job may then be invoiced again. A Paid
+    invoice must have its payment undone first, so voiding can never hide money
+    that was actually collected.
+    """
+    _require_admin(staff, "void an invoice")
+    invoice = get_invoice(invoice_id)
+    text = _validate_reason(reason, "void an invoice")
+    if invoice.is_void:
+        raise ValidationError(f"Invoice #{invoice.pk} is already void.")
+    if invoice.is_paid:
+        raise ValidationError(
+            f"Invoice #{invoice.pk} is Paid. Undo the payment before voiding it."
+        )
+
+    try:
+        with transaction.atomic():
+            updated = Invoice.objects.filter(
+                pk=invoice.pk, PaymentStatus=PAYMENT_PENDING
+            ).update(
+                PaymentStatus=PAYMENT_VOID,
+                VoidReason=text,
+                VoidedAt=dj_timezone.now(),
+            )
+    except Exception:
+        logger.exception("Invoice void failed (InvoiceID=%s).", invoice_id)
+        raise ServiceError("Something went wrong, please try again.")
+    if not updated:
+        raise ValidationError(
+            f"Invoice #{invoice.pk} is no longer Pending, so it was not voided."
+        )
+    return get_invoice(invoice.pk)
+
+
+def undo_invoice_payment(invoice_id: int, reason: str, staff: Staff) -> tuple:
+    """Put a mistakenly Paid invoice back to Pending, recording why.
+
+    Returns ``(invoice, reason)``; the view writes the reason to the audit log.
+    ``PaidAt`` is cleared because no payment stands any more. The payment
+    method is left as it was, since it may be the customer's own choice.
+    """
+    _require_admin(staff, "undo an invoice payment")
+    invoice = get_invoice(invoice_id)
+    text = _validate_reason(reason, "undo a payment")
+    if not invoice.is_paid:
+        raise ValidationError(
+            f"Invoice #{invoice.pk} is {invoice.PaymentStatus.lower()}, not Paid, "
+            "so there is no payment to undo."
+        )
+
+    try:
+        with transaction.atomic():
+            updated = Invoice.objects.filter(
+                pk=invoice.pk, PaymentStatus=PAYMENT_PAID
+            ).update(PaymentStatus=PAYMENT_PENDING, PaidAt=None)
+    except Exception:
+        logger.exception("Invoice payment undo failed (InvoiceID=%s).", invoice_id)
+        raise ServiceError("Something went wrong, please try again.")
+    if not updated:
+        raise ValidationError(
+            f"Invoice #{invoice.pk} is no longer Paid, so nothing was changed."
+        )
+    return get_invoice(invoice.pk), text
 
 
 def list_invoices_for_appointments(appointment_ids) -> list[Invoice]:
@@ -3141,7 +3586,8 @@ def list_repairs_eligible_for_invoice() -> list[Repair]:
     """
     return list(
         Repair.objects.select_related(*_REPAIR_SELECT_RELATED)
-        .filter(Status=REPAIR_COMPLETED, invoice__isnull=True)
+        .filter(Status=REPAIR_COMPLETED)
+        .exclude(invoices__PaymentStatus__in=[PAYMENT_PENDING, PAYMENT_PAID])
         .order_by("CompletedAt", "RepairID")
     )
 
@@ -3552,12 +3998,18 @@ def get_customer_repair_status(reference_code: str) -> dict:
     # Queried rather than read as ``repair.invoice``: that attribute access raises
     # when a completed job has not been billed yet, which is the normal case.
     invoice = (
-        Invoice.objects.filter(RepairID=repair).first() if repair is not None else None
+        Invoice.objects.filter(RepairID=repair)
+        .exclude(PaymentStatus=PAYMENT_VOID)
+        .first()
+        if repair is not None
+        else None
     )
 
-    if appointment.is_cancelled:
+    repair_cancelled = repair is not None and repair.is_cancelled
+    if appointment.is_cancelled or repair_cancelled:
         # Cancelled short-circuits the repair walk: whatever stage the job had
-        # reached, the booking it came in on is over (T4-STS-09).
+        # reached, the booking it came in on is over (T4-STS-09). The same holds
+        # when the workshop cancelled the repair job itself.
         stages = []
         current_stage = CUSTOMER_STAGE_CANCELLED
     else:
@@ -3574,8 +4026,17 @@ def get_customer_repair_status(reference_code: str) -> dict:
         "appointment_date": appointment.AppointmentDate,
         "appointment_time": appointment.AppointmentTime,
         "appointment_status": appointment.Status,
-        "is_cancelled": appointment.is_cancelled,
-        "cancel_reason": appointment.CancelReason if appointment.is_cancelled else "",
+        "is_cancelled": appointment.is_cancelled or repair_cancelled,
+        # True when it was the repair job, not the booking, that was cancelled,
+        # so the page can say which.
+        "is_repair_cancelled": repair_cancelled and not appointment.is_cancelled,
+        "cancel_reason": (
+            appointment.CancelReason
+            if appointment.is_cancelled
+            else repair.CancelReason
+            if repair_cancelled
+            else ""
+        ),
         # Deliberately empty until a repair row exists: at "Booked" the customer
         # has no vehicle details to see and no job to follow (T4-STS-03).
         "has_repair": repair is not None,
@@ -3623,6 +4084,7 @@ def _customer_invoice_for_reference(reference_code: str) -> Invoice:
     invoice = (
         Invoice.objects.select_related(*_INVOICE_SELECT_RELATED)
         .filter(RepairID__AppointmentID=appointment, RepairID__Status=REPAIR_COMPLETED)
+        .exclude(PaymentStatus=PAYMENT_VOID)
         .first()
     )
     if invoice is None:
@@ -3801,10 +4263,11 @@ def build_business_report(start_date, end_date) -> dict:
     completed_count = completed.count()
     urgent_count = completed.filter(RepairPriority=REPAIR_PRIORITY_URGENT).count()
 
-    # Revenue (invoices generated in the period)
+    # Revenue (invoices generated in the period). Void invoices were issued in
+    # error and are not revenue; the job's replacement bill is counted instead.
     invoiced = Invoice.objects.filter(
         GeneratedAt__date__gte=start, GeneratedAt__date__lte=end
-    ).aggregate(
+    ).exclude(PaymentStatus=PAYMENT_VOID).aggregate(
         count=Count("InvoiceID"),
         total=Sum("TotalAmount"),
         labour=Sum("LabourCost"),
